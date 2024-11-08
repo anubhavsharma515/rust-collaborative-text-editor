@@ -1,5 +1,5 @@
 use iced::widget::{column, text_editor};
-use iced::{Task, Element, Theme};
+use iced::{Task, Element, Fill, Theme};
 
 // Custom widgets
 mod widgets;
@@ -35,7 +35,7 @@ impl Editor {
             Self { 
                 content: text_editor::Content::new(),
                 menubar: MenuBar::new(),
-                theme: Theme::Light,
+                theme: Theme::default(),
             },
             Task::none()
         )
@@ -49,6 +49,7 @@ impl Editor {
         column![
             self.menubar.view().map(Message::Menu),
             text_editor(&self.content)
+                .height(Fill)
                 .on_action(Message::Edit)
         ]
         .into()

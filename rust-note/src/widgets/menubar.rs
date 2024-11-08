@@ -13,7 +13,7 @@ pub struct MenuBar {
 impl MenuBar {
     pub fn new() -> Self {
         Self {
-            selected_theme: Theme::Light,
+            selected_theme: Theme::default(),
         }
     }
 

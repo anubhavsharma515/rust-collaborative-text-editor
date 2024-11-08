@@ -12,4 +12,4 @@ readme = "README.md"
 homepage = "https://github.com/anubhavsharma515/rust-collaborative-text-editor"
 
 [dependencies]
-iced = "0.13"
+iced = {version = "0.13", features=["highlighter"]}
