@@ -1,6 +1,15 @@
 [package]
 name = "rust-note"
 version = "0.1.0"
+authors = ["Anubhav Sharma <anubhavsharma99@hotmail.com>"]
 edition = "2021"
+description = "A lightweight, terminal-based collaborative text editor built in Rust, supporting real-time collaboration."
+license = "MIT"
+repository = "https://github.com/anubhavsharma515/rust-collaborative-text-editor"
+keywords = ["collaborative", "text editor", "rust", "real-time", "terminal"]
+categories = ["text-editors", "collaboration", "network-programming"]
+readme = "README.md"
+homepage = "https://github.com/anubhavsharma515/rust-collaborative-text-editor"
 
 [dependencies]
+iced = "0.13"
