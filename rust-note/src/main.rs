@@ -1,5 +1,5 @@
-use iced::widget::{column, text_editor};
-use iced::{Task, Element, Fill, Theme};
+use iced::widget::{column, markdown, text_editor, row, scrollable};
+use iced::{Alignment, Task, Element, Fill, Theme, Length};
 
 // Custom widgets
 mod widgets;
@@ -10,6 +10,9 @@ pub struct Editor {
     content: text_editor::Content,
     menubar: MenuBar,
     theme: Theme,
+    markdown_text: String,
+    is_bold: bool,
+    is_italic: bool,
 }
 
 pub fn main() -> iced::Result {
@@ -32,10 +35,13 @@ impl Editor {
 
     fn new() -> (Self, Task<Message>) {
         ( 
-            Self { 
+            Self {
                 content: text_editor::Content::new(),
                 menubar: MenuBar::new(),
                 theme: Theme::default(),
+                markdown_text: String::from("Write your **Markdown** text here."),
+                is_bold: false,
+                is_italic: false,
             },
             Task::none()
         )
@@ -48,10 +54,21 @@ impl Editor {
     fn view(&self) -> Element<Message> {
         column![
             self.menubar.view().map(Message::Menu),
-            text_editor(&self.content)
-                .height(Fill)
-                .on_action(Message::Edit)
+            row![
+                text_editor(&self.content)
+                    .height(Length::FillPortion(1))
+                    .on_action(Message::Edit),
+                // markdown::view(
+                //     markdown::parse(&self.markdown_text).collect(), 
+                //     markdown::Settings::default(), 
+                //     markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
+                // )
+            ]
+            .spacing(20)
+            .align_y(Alignment::Center)
         ]
+        .align_x(Alignment::Center)
+        .spacing(10)
         .into()
     }
 
@@ -59,20 +76,39 @@ impl Editor {
         match message {
             Message::Edit(action) => {
                 self.content.perform(action);
+
+                // Update markdown preview with the editor's text content
+                // self.markdown_text = self.content.value().to_string();
             },
             Message::Menu(menu_msg) => {
                 self.menubar.update(menu_msg.clone());
-                // Update the selected theme when the menu item is selected
-                if let MenuMessage::ThemeSelected(theme) = menu_msg {
-                    self.theme = theme; // Update the theme
+
+                match menu_msg {
+                    MenuMessage::ThemeSelected(theme) => {
+                        self.theme = theme;
+                    }
+                    MenuMessage::ToggleBold => {
+                        self.toggle_formatting("**");
+                    }
+                    MenuMessage::ToggleItalic => {
+                        self.toggle_formatting("*");
+                    }
                 }
-            },
+            }
         }
         Task::none()
-    } 
+    }
 
     fn theme(&self) -> Theme {
         self.theme.clone()
+    } 
+
+    fn toggle_formatting(&mut self, symbol: &str) {
+        // Get the current selection in the editor, if any, and wrap it in the formatting symbol
+        let text = self.content.text();
+        let selected_text = self.content.selection().unwrap();
+        println!("{text}");
+        println!("{symbol}{selected_text}{symbol}");
     }
 }
 
