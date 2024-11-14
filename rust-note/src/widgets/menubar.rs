@@ -1,11 +1,9 @@
-use iced::widget::{pick_list, button, row};
-use iced::{Alignment, Task, Element, Length, Theme};
+use iced::widget::{pick_list, row};
+use iced::{Alignment, Element, Length, Task, Theme};
 
 #[derive(Debug, Clone)]
 pub enum MenuMessage {
     ThemeSelected(Theme),
-    ToggleBold,
-    ToggleItalic,
 }
 
 pub struct MenuBar {
@@ -24,13 +22,8 @@ impl MenuBar {
             MenuMessage::ThemeSelected(theme) => {
                 self.selected_theme = theme.clone();
                 println!("Theme selected: {:?}", theme);
-            },
-            MenuMessage::ToggleBold => {
-                println!("Bold toggled");
-            },
-            MenuMessage::ToggleItalic => {
-                println!("Italic toggled");
             }
+            _ => {}
         }
         Task::none()
     }
@@ -44,21 +37,9 @@ impl MenuBar {
         .width(Length::Shrink)
         .padding(5);
 
-        let bold_button = button("Bold")
-            .on_press(MenuMessage::ToggleBold)
-            .padding(5);
-
-        let italic_button = button("Italic")
-            .on_press(MenuMessage::ToggleItalic)
-            .padding(5);
-
-        row![
-            theme_selector,
-            bold_button,
-            italic_button
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center)
-        .into()
+        row![theme_selector]
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .into()
     }
 }
