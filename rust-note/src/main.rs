@@ -4,7 +4,7 @@ use iced::{Alignment, Element, Length, Task, Theme};
 // Custom widgets
 mod widgets;
 
-use widgets::format_bar::{FormatBar, TextStyle};
+use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_TEXT_SIZE};
 use widgets::menubar::{MenuBar, MenuMessage};
 
 pub struct Editor {
@@ -13,6 +13,7 @@ pub struct Editor {
     format_bar: FormatBar,
     theme: Theme,
     markdown_text: Vec<markdown::Item>,
+    markdown_settings: markdown::Settings,
 }
 
 pub fn main() -> iced::Result {
@@ -38,6 +39,7 @@ impl Editor {
                 format_bar: FormatBar::new(),
                 theme: Theme::default(),
                 markdown_text: markdown::parse("Write your **Markdown** text here.").collect(),
+                markdown_settings: markdown::Settings::with_text_size(DEFAULT_TEXT_SIZE),
             },
             Task::none(),
         )
@@ -48,8 +50,6 @@ impl Editor {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let mut markdown_settings = markdown::Settings::default();
-        markdown_settings.text_size = iced::Pixels(50.0);
         column![
             self.menubar.view().map(Message::Menu),
             self.format_bar.view().map(Message::Format),
@@ -59,7 +59,7 @@ impl Editor {
                     .on_action(Message::Edit),
                 markdown::view(
                     &self.markdown_text,
-                    markdown_settings,
+                    self.markdown_settings,
                     markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
                 )
                 .map(Message::LinkClicked)
@@ -90,7 +90,8 @@ impl Editor {
                 }
             }
             Message::Format(text_style) => {
-                // Apply functionality first, then update the UI
+                let _ = self.format_bar.update(text_style.clone()); // Update the format bar UI
+
                 match text_style {
                     TextStyle::Bold => {
                         self.toggle_formatting(TextStyle::Bold);
@@ -101,9 +102,18 @@ impl Editor {
                     TextStyle::Strikethrough => {
                         self.toggle_formatting(TextStyle::Strikethrough);
                     }
-                }
+                    TextStyle::TextSize(size) => {
+                        // Update the text size
+                        let text_size = if let Ok(size) = size.parse::<f32>() {
+                            iced::Pixels::from(size)
+                        } else {
+                            iced::Pixels::from(DEFAULT_TEXT_SIZE)
+                        };
 
-                let _ = self.format_bar.update(text_style); // Update the format bar UI
+                        self.markdown_settings = markdown::Settings::with_text_size(text_size);
+                    }
+                    _ => {}
+                }
             }
             Message::LinkClicked(url) => {
                 println!("Link clicked: {}", url);
@@ -160,6 +170,9 @@ impl Editor {
                     } else {
                         format!("~~{}~~", selection)
                     }
+                }
+                _ => {
+                    return;
                 }
             };
 
