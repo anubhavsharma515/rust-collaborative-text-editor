@@ -1,3 +1,4 @@
+use iced::keyboard;
 use iced::widget::{column, markdown, row, text_editor};
 use iced::{Alignment, Element, Length, Task, Theme};
 
@@ -6,6 +7,10 @@ mod widgets;
 
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_TEXT_SIZE};
 use widgets::menubar::{MenuBar, MenuMessage};
+
+const BOLD_HOTKEY: &str = "b";
+const ITALIC_HOTKEY: &str = "i";
+const STRIKETHROUGH_HOTKEY: &str = "f";
 
 pub struct Editor {
     content: text_editor::Content,
@@ -56,7 +61,33 @@ impl Editor {
             row![
                 text_editor(&self.content)
                     .height(Length::FillPortion(1))
-                    .on_action(Message::Edit),
+                    .on_action(Message::Edit)
+                    .key_binding(|key_press| {
+                        match key_press.key.as_ref() {
+                            keyboard::Key::Character(BOLD_HOTKEY)
+                                if key_press.modifiers.command() =>
+                            {
+                                Some(text_editor::Binding::Custom(Message::Format(
+                                    TextStyle::Bold,
+                                )))
+                            }
+                            keyboard::Key::Character(ITALIC_HOTKEY)
+                                if key_press.modifiers.command() =>
+                            {
+                                Some(text_editor::Binding::Custom(Message::Format(
+                                    TextStyle::Italic,
+                                )))
+                            }
+                            keyboard::Key::Character(STRIKETHROUGH_HOTKEY)
+                                if key_press.modifiers.command() =>
+                            {
+                                Some(text_editor::Binding::Custom(Message::Format(
+                                    TextStyle::Strikethrough,
+                                )))
+                            }
+                            _ => text_editor::Binding::from_key_press(key_press),
+                        }
+                    }),
                 markdown::view(
                     &self.markdown_text,
                     self.markdown_settings,
@@ -183,6 +214,7 @@ impl Editor {
                     formatted_text.into(),
                 )));
         }
-        // self.content.perform(text_editor::Action::Move(text_editor::Motion::WordRight)); // Move cursor to the right of the inserted text
+        self.content
+            .perform(text_editor::Action::Move(text_editor::Motion::WordLeft)); // Move cursor to the right of the inserted text
     }
 }
