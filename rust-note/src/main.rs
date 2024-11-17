@@ -1,4 +1,8 @@
-use iced::widget::{column, markdown, row, text, text_editor};
+use std::ffi;
+use std::path::{Path, PathBuf};
+
+use iced::highlighter;
+use iced::widget::{column, horizontal_space, markdown, row, scrollable, text, text_editor};
 use iced::keyboard;
 use iced::{Alignment, Element, Length, Task, Theme};
 
@@ -16,6 +20,7 @@ pub struct Editor {
     content: text_editor::Content,
     menubar: MenuBar,
     format_bar: FormatBar,
+    file: Option<PathBuf>,
     theme: Theme,
     markdown_text: Vec<markdown::Item>,
     markdown_settings: markdown::Settings,
@@ -42,6 +47,7 @@ impl Editor {
                 content: text_editor::Content::new(),
                 menubar: MenuBar::new(),
                 format_bar: FormatBar::new(),
+                file: None,
                 theme: Theme::default(),
                 markdown_text: markdown::parse("Write your **Markdown** text here.").collect(),
                 markdown_settings: markdown::Settings::with_text_size(DEFAULT_TEXT_SIZE),
@@ -60,8 +66,21 @@ impl Editor {
 
         // Create the status bar
         let status = row![
+            text(if let Some(path) = &self.file {
+                let path = path.display().to_string();
+
+                if path.len() > 60 {
+                    format!("...{}", &path[path.len() - 40..])
+                } else {
+                    path
+                }
+            } else {
+                String::from("New file")
+            }),
+            horizontal_space(),
             text({
-                let (line, column) = &self.content.cursor_position();
+                let (line, column) = self.content.cursor_position();
+
                 format!("{}:{}", line + 1, column + 1)
             })
         ]
@@ -72,6 +91,14 @@ impl Editor {
             self.format_bar.view().map(Message::Format),
             row![
                 text_editor(&self.content)
+                    .highlight(
+                        self.file
+                            .as_deref()
+                            .and_then(Path::extension)
+                            .and_then(ffi::OsStr::to_str)
+                            .unwrap_or("rs"),
+                        highlighter::Theme::SolarizedDark,
+                    )
                     .height(Length::FillPortion(1))
                     .on_action(Message::Edit)
                     .key_binding(|key_press| {
@@ -100,15 +127,17 @@ impl Editor {
                             _ => text_editor::Binding::from_key_press(key_press),
                         }
                     }),
+                scrollable(
                 markdown::view(
                     &self.markdown_text,
                     self.markdown_settings,
-                    markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
+                    markdown::Style::from_palette(self.theme.clone().palette()),
                 )
                 .map(Message::LinkClicked),
+                )
             ]
             .spacing(20)
-            .align_y(Alignment::Center),
+            .align_y(Alignment::Start),
             status, // Add the status widget here
         ]
         .align_x(Alignment::Center)
@@ -133,8 +162,9 @@ impl Editor {
                     }
                     MenuMessage::FileOpened(result) => {
                         if let Ok((path, contents)) = result {
+                            self.file = Some(path.clone());
                             self.content = text_editor::Content::with_text(&contents);
-                            self.markdown_text = markdown::parse(&contents).collect();
+                            self.markdown_text = markdown::parse(&self.content.text()).collect();
                             println!("File loaded: {:?}", path);
                         }
                     }

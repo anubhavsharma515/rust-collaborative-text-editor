@@ -58,9 +58,7 @@ impl MenuBar {
 
                 Task::none()
             }
-        };
-
-        Task::none()
+        }
     }
 
     pub fn view(&self) -> Element<MenuMessage> {
@@ -90,6 +88,7 @@ pub enum Error {
 pub async fn open_file() -> Result<(PathBuf, Arc<String>), Error> {
     let picked_file = rfd::AsyncFileDialog::new()
         .set_title("Open a text file...")
+        .add_filter("Text Files", &["md"])
         .pick_file()
         .await
         .ok_or(Error::DialogClosed)?;
@@ -97,7 +96,7 @@ pub async fn open_file() -> Result<(PathBuf, Arc<String>), Error> {
     load_file(picked_file).await
 }
 
-async fn load_file(
+pub async fn load_file(
     path: impl Into<PathBuf>,
 ) -> Result<(PathBuf, Arc<String>), Error> {
     let path = path.into();

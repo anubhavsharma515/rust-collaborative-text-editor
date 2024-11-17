@@ -12,7 +12,7 @@ readme = "README.md"
 homepage = "https://github.com/anubhavsharma515/rust-collaborative-text-editor"
 
 [dependencies]
-iced = { version = "0.13", features=["highlighter", "markdown"] }
+iced = { version = "0.13", features=["tokio", "highlighter", "markdown"] }
 iced_aw = { version = "0.11.0", default-features = false, features=["menu"] }
 tokio = { version = "1", features = ["fs"] }
 rfd = { version = "0.13" }
