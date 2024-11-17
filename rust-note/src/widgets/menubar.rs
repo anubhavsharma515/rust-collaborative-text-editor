@@ -64,7 +64,7 @@ impl MenuBar {
     }
 
     pub fn view(&self) -> Element<MenuMessage> {
-        let file_picker = button("Bold").on_press(MenuMessage::OpenFile).padding(5);
+        let file_picker = button("Open File").on_press(MenuMessage::OpenFile).padding(5);
 
 
         let theme_selector = pick_list(

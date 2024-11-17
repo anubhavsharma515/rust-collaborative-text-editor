@@ -1,11 +1,16 @@
 use iced::widget::{column, markdown, row, text, text_editor};
+use iced::keyboard;
 use iced::{Alignment, Element, Length, Task, Theme};
 
 // Custom widgets
 mod widgets;
 
-use widgets::format_bar::{FormatBar, TextStyle};
+use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_TEXT_SIZE};
 use widgets::menubar::{MenuBar, MenuMessage, open_file};
+
+const BOLD_HOTKEY: &str = "b";
+const ITALIC_HOTKEY: &str = "i";
+const STRIKETHROUGH_HOTKEY: &str = "f";
 
 pub struct Editor {
     content: text_editor::Content,
@@ -13,6 +18,7 @@ pub struct Editor {
     format_bar: FormatBar,
     theme: Theme,
     markdown_text: Vec<markdown::Item>,
+    markdown_settings: markdown::Settings,
 }
 
 pub fn main() -> iced::Result {
@@ -38,6 +44,7 @@ impl Editor {
                 format_bar: FormatBar::new(),
                 theme: Theme::default(),
                 markdown_text: markdown::parse("Write your **Markdown** text here.").collect(),
+                markdown_settings: markdown::Settings::with_text_size(DEFAULT_TEXT_SIZE),
             },
             Task::none(),
         )
@@ -66,10 +73,36 @@ impl Editor {
             row![
                 text_editor(&self.content)
                     .height(Length::FillPortion(1))
-                    .on_action(Message::Edit),
+                    .on_action(Message::Edit)
+                    .key_binding(|key_press| {
+                        match key_press.key.as_ref() {
+                            keyboard::Key::Character(BOLD_HOTKEY)
+                                if key_press.modifiers.command() =>
+                            {
+                                Some(text_editor::Binding::Custom(Message::Format(
+                                    TextStyle::Bold,
+                                )))
+                            }
+                            keyboard::Key::Character(ITALIC_HOTKEY)
+                                if key_press.modifiers.command() =>
+                            {
+                                Some(text_editor::Binding::Custom(Message::Format(
+                                    TextStyle::Italic,
+                                )))
+                            }
+                            keyboard::Key::Character(STRIKETHROUGH_HOTKEY)
+                                if key_press.modifiers.command() =>
+                            {
+                                Some(text_editor::Binding::Custom(Message::Format(
+                                    TextStyle::Strikethrough,
+                                )))
+                            }
+                            _ => text_editor::Binding::from_key_press(key_press),
+                        }
+                    }),
                 markdown::view(
                     &self.markdown_text,
-                    markdown_settings,
+                    self.markdown_settings,
                     markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
                 )
                 .map(Message::LinkClicked),
@@ -111,7 +144,8 @@ impl Editor {
                 }
             }
             Message::Format(text_style) => {
-                // Apply functionality first, then update the UI
+                let _ = self.format_bar.update(text_style.clone()); // Update the format bar UI
+
                 match text_style {
                     TextStyle::Bold => {
                         self.toggle_formatting(TextStyle::Bold);
@@ -122,9 +156,18 @@ impl Editor {
                     TextStyle::Strikethrough => {
                         self.toggle_formatting(TextStyle::Strikethrough);
                     }
-                }
+                    TextStyle::TextSize(size) => {
+                        // Update the text size
+                        let text_size = if let Ok(size) = size.parse::<f32>() {
+                            iced::Pixels::from(size)
+                        } else {
+                            iced::Pixels::from(DEFAULT_TEXT_SIZE)
+                        };
 
-                let _ = self.format_bar.update(text_style); // Update the format bar UI
+                        self.markdown_settings = markdown::Settings::with_text_size(text_size);
+                    }
+                    _ => {}
+                }
             }
             Message::LinkClicked(url) => {
                 println!("Link clicked: {}", url);
@@ -182,6 +225,9 @@ impl Editor {
                         format!("~~{}~~", selection)
                     }
                 }
+                _ => {
+                    return;
+                }
             };
 
             self.content
@@ -191,5 +237,7 @@ impl Editor {
                     formatted_text.into(),
                 )));
         }
+        self.content
+            .perform(text_editor::Action::Move(text_editor::Motion::WordLeft)); // Move cursor to the right of the inserted text
     }
 }
