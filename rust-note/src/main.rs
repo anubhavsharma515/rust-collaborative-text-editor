@@ -1,11 +1,11 @@
-use iced::widget::{column, markdown, row, text_editor};
+use iced::widget::{column, markdown, row, text, text_editor};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 // Custom widgets
 mod widgets;
 
 use widgets::format_bar::{FormatBar, TextStyle};
-use widgets::menubar::{MenuBar, MenuMessage};
+use widgets::menubar::{MenuBar, MenuMessage, open_file};
 
 pub struct Editor {
     content: text_editor::Content,
@@ -50,6 +50,16 @@ impl Editor {
     fn view(&self) -> Element<'_, Message> {
         let mut markdown_settings = markdown::Settings::default();
         markdown_settings.text_size = iced::Pixels(50.0);
+
+        // Create the status bar
+        let status = row![
+            text({
+                let (line, column) = &self.content.cursor_position();
+                format!("{}:{}", line + 1, column + 1)
+            })
+        ]
+        .spacing(10);
+
         column![
             self.menubar.view().map(Message::Menu),
             self.format_bar.view().map(Message::Format),
@@ -62,10 +72,11 @@ impl Editor {
                     markdown_settings,
                     markdown::Style::from_palette(Theme::TokyoNightStorm.palette()),
                 )
-                .map(Message::LinkClicked)
+                .map(Message::LinkClicked),
             ]
             .spacing(20)
-            .align_y(Alignment::Center)
+            .align_y(Alignment::Center),
+            status, // Add the status widget here
         ]
         .align_x(Alignment::Center)
         .spacing(10)
@@ -86,6 +97,16 @@ impl Editor {
                 match menu_msg {
                     MenuMessage::ThemeSelected(theme) => {
                         self.theme = theme;
+                    }
+                    MenuMessage::FileOpened(result) => {
+                        if let Ok((path, contents)) = result {
+                            self.content = text_editor::Content::with_text(&contents);
+                            self.markdown_text = markdown::parse(&contents).collect();
+                            println!("File loaded: {:?}", path);
+                        }
+                    }
+                    MenuMessage::OpenFile => {
+                        return Task::perform(open_file(), MenuMessage::FileOpened).map(Message::Menu);
                     }
                 }
             }
@@ -170,6 +191,5 @@ impl Editor {
                     formatted_text.into(),
                 )));
         }
-        // self.content.perform(text_editor::Action::Move(text_editor::Motion::WordRight)); // Move cursor to the right of the inserted text
     }
 }
