@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iced::widget::{button, pick_list, row, column, text_editor};
+use iced::widget::{button, column, pick_list, row, text_editor};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 #[derive(Debug, Clone)]
@@ -29,7 +29,7 @@ impl MenuBar {
             file: None,
             content: Arc::new(String::new()),
             is_loading: true,
-            is_dirty: false
+            is_dirty: false,
         }
     }
 
@@ -60,18 +60,18 @@ impl MenuBar {
 
                 Task::none()
             }
-            MenuMessage::SaveFile => {
-                Task::none()
-            }
-            MenuMessage::FileSaved(_) => {
-                Task::none()
-            }
+            MenuMessage::SaveFile => Task::none(),
+            MenuMessage::FileSaved(_) => Task::none(),
         }
     }
 
     pub fn view(&self) -> Element<MenuMessage> {
-        let file_picker = button("Open File").on_press(MenuMessage::OpenFile).padding(5);
-        let file_save   = button("Save File").on_press(MenuMessage::SaveFile).padding(5);
+        let file_picker = button("Open File")
+            .on_press(MenuMessage::OpenFile)
+            .padding(5);
+        let file_save = button("Save File")
+            .on_press(MenuMessage::SaveFile)
+            .padding(5);
 
         let theme_selector = pick_list(
             Theme::ALL,
@@ -105,9 +105,7 @@ pub async fn open_file() -> Result<(PathBuf, Arc<String>), Error> {
     load_file(picked_file).await
 }
 
-pub async fn load_file(
-    path: impl Into<PathBuf>,
-) -> Result<(PathBuf, Arc<String>), Error> {
+pub async fn load_file(path: impl Into<PathBuf>) -> Result<(PathBuf, Arc<String>), Error> {
     let path = path.into();
 
     let contents = tokio::fs::read_to_string(&path)
@@ -118,10 +116,7 @@ pub async fn load_file(
     Ok((path, contents))
 }
 
-pub async fn save_file(
-    path: Option<PathBuf>,
-    contents: String,
-) -> Result<PathBuf, Error> {
+pub async fn save_file(path: Option<PathBuf>, contents: String) -> Result<PathBuf, Error> {
     let path = if let Some(path) = path {
         path
     } else {
