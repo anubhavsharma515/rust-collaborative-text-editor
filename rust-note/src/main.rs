@@ -10,7 +10,7 @@ use iced::{Alignment, Element, Length, Task, Theme};
 mod widgets;
 
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_TEXT_SIZE};
-use widgets::menubar::{MenuBar, MenuMessage, open_file};
+use widgets::menubar::{MenuBar, MenuMessage, open_file, save_file};
 
 const BOLD_HOTKEY: &str = "b";
 const ITALIC_HOTKEY: &str = "i";
@@ -38,6 +38,7 @@ enum Message {
     Menu(MenuMessage),
     Format(TextStyle),
     LinkClicked(markdown::Url),
+    NoOp,
 }
 
 impl Editor {
@@ -81,7 +82,7 @@ impl Editor {
             text({
                 let (line, column) = self.content.cursor_position();
 
-                format!("{}:{}", line + 1, column + 1)
+                format!("Line {}, Columns {}", line + 1, column + 1)
             })
         ]
         .spacing(10);
@@ -171,6 +172,14 @@ impl Editor {
                     MenuMessage::OpenFile => {
                         return Task::perform(open_file(), MenuMessage::FileOpened).map(Message::Menu);
                     }
+                    MenuMessage::FileSaved(_) => {
+                    }
+                    MenuMessage::SaveFile => {
+                        return Task::perform(
+                            save_file(self.file.clone(), self.content.text()),
+                            MenuMessage::FileSaved
+                        ).map(|_| Message::NoOp);
+                    }
                 }
             }
             Message::Format(text_style) => {
@@ -196,12 +205,12 @@ impl Editor {
 
                         self.markdown_settings = markdown::Settings::with_text_size(text_size);
                     }
-                    _ => {}
                 }
             }
             Message::LinkClicked(url) => {
                 println!("Link clicked: {}", url);
             }
+            Message::NoOp => {}
         }
         Task::none()
     }

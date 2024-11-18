@@ -10,6 +10,8 @@ pub enum MenuMessage {
     ThemeSelected(Theme),
     OpenFile,
     FileOpened(Result<(PathBuf, Arc<String>), Error>),
+    SaveFile,
+    FileSaved(Result<PathBuf, Error>),
 }
 
 pub struct MenuBar {
@@ -58,12 +60,18 @@ impl MenuBar {
 
                 Task::none()
             }
+            MenuMessage::SaveFile => {
+                Task::none()
+            }
+            MenuMessage::FileSaved(_) => {
+                Task::none()
+            }
         }
     }
 
     pub fn view(&self) -> Element<MenuMessage> {
         let file_picker = button("Open File").on_press(MenuMessage::OpenFile).padding(5);
-
+        let file_save   = button("Save File").on_press(MenuMessage::SaveFile).padding(5);
 
         let theme_selector = pick_list(
             Theme::ALL,
@@ -73,7 +81,8 @@ impl MenuBar {
         .width(Length::Shrink)
         .padding(5);
 
-        row![file_picker, theme_selector]
+        row![file_picker, file_save, theme_selector]
+            .spacing(10)
             .align_y(Alignment::Center)
             .into()
     }
@@ -107,4 +116,27 @@ pub async fn load_file(
         .map_err(|error| Error::IoError(error.kind()))?;
 
     Ok((path, contents))
+}
+
+pub async fn save_file(
+    path: Option<PathBuf>,
+    contents: String,
+) -> Result<PathBuf, Error> {
+    let path = if let Some(path) = path {
+        path
+    } else {
+        rfd::AsyncFileDialog::new()
+            .save_file()
+            .await
+            .as_ref()
+            .map(rfd::FileHandle::path)
+            .map(Path::to_owned)
+            .ok_or(Error::DialogClosed)?
+    };
+
+    tokio::fs::write(&path, contents)
+        .await
+        .map_err(|error| Error::IoError(error.kind()))?;
+
+    Ok(path)
 }
