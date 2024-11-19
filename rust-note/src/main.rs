@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use iced::keyboard;
 use iced::widget::{
-    center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
-    stack, text, text_editor, toggler, Text,
+    button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
+    stack, text, text_input, text_editor, toggler, Text, Container
 };
 use iced::{highlighter, Color};
 use iced::{Alignment, Element, Length, Task, Theme};
@@ -20,6 +20,20 @@ const ITALIC_HOTKEY: &str = "i";
 const STRIKETHROUGH_HOTKEY: &str = "f";
 const SHORTCUT_PALETTE_HOTKEY: &str = "p";
 
+pub struct SessionModal {
+    pub name_input: String,
+    pub server_input: String,
+}
+
+impl Default for SessionModal {
+    fn default() -> Self {
+        Self {
+            name_input: String::new(),
+            server_input: String::new(),
+        }
+    }
+}
+
 pub struct Editor {
     content: text_editor::Content,
     menubar: MenuBar,
@@ -28,6 +42,7 @@ pub struct Editor {
     theme: Theme,
     markdown_text: Vec<markdown::Item>,
     markdown_settings: markdown::Settings,
+    modal_content: SessionModal,
     markdown_preview_open: bool,
     shortcut_palette_open: bool,
 }
@@ -44,11 +59,15 @@ enum Message {
     Menu(MenuMessage),
     Format(TextStyle),
     LinkClicked(markdown::Url),
-    NoOp,
     ShowMarkdownPreview(bool),
+    NoOp,
     DeleteLine,
     DeleteWord,
     ShortcutPaletteToggle,
+    LoginNameChanged(String),
+    LoginServerChanged(String),
+    LoginButtonPressed,
+    ToggleLoginModal,
 }
 
 impl Editor {
@@ -60,6 +79,7 @@ impl Editor {
                 format_bar: FormatBar::new(),
                 file: None,
                 theme: Theme::default(),
+                modal_content: SessionModal::default(),
                 markdown_text: markdown::parse("Write your **Markdown** text here.").collect(),
                 markdown_settings: markdown::Settings::with_text_size(DEFAULT_TEXT_SIZE),
                 markdown_preview_open: false,
@@ -77,7 +97,6 @@ impl Editor {
         let mut markdown_settings = markdown::Settings::default();
         markdown_settings.text_size = iced::Pixels(50.0);
 
-        // Create the status bar
         let status = row![
             text(if let Some(path) = &self.file {
                 let path = path.display().to_string();
@@ -99,7 +118,7 @@ impl Editor {
         ]
         .spacing(10);
 
-        let shortcut_palette = container(
+        let shortcut_palette: Container<Message> = container(
             column![
                 text("Shortcut Map").size(24),
                 column![
@@ -111,6 +130,28 @@ impl Editor {
                     Text::new(format!(
                         "cmd + {SHORTCUT_PALETTE_HOTKEY}: Toggle shortcut palette"
                     )),
+                ]
+                .spacing(10)
+            ]
+            .spacing(20),
+        )
+        .width(300)
+        .padding(10)
+        .style(container::rounded_box);
+
+        let session_modal: Container<Message> = container(
+            column![
+                text("Login").size(24),
+                column![
+                    text_input("Enter your name", &self.modal_content.name_input)
+                        .on_input(Message::LoginNameChanged)
+                        .padding(5),
+                    text_input("Enter server address", &self.modal_content.server_input)
+                        .on_input(Message::LoginServerChanged)
+                        .padding(5),
+                    button("Login")
+                        .on_press(Message::LoginButtonPressed)
+                        .style(button::primary),
                 ]
                 .spacing(10)
             ]
@@ -199,10 +240,16 @@ impl Editor {
         .spacing(10);
 
         if self.shortcut_palette_open {
-            modal(content, shortcut_palette, Message::ShortcutPaletteToggle)
+            modal(content, session_modal, Message::ShortcutPaletteToggle)
         } else {
             content.into()
         }
+
+        // if self.session_modal_open {
+        //     modal(content, session_modal, Message::ShortcutPaletteToggle)
+        // } else {
+        //     content.into()
+        // }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -286,6 +333,24 @@ impl Editor {
             }
             Message::ShowMarkdownPreview(toggled) => {
                 self.markdown_preview_open = toggled;
+            }
+        // Update the name input
+            Message::LoginNameChanged(name) => {
+                self.modal_content.name_input = name;
+            }
+
+            // Update the server input
+            Message::LoginServerChanged(server) => {
+                self.modal_content.server_input = server;
+            }
+
+            // Handle login button press
+            Message::LoginButtonPressed => { }
+            // Toggle the login modal
+            Message::ToggleLoginModal => {
+                if self.modal_content.name_input.is_empty() {
+                    self.modal_content.name_input = String::from("Guest");
+                }
             }
         }
         Task::none()
