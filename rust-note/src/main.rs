@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use iced::keyboard;
 use iced::widget::{
     center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
-    stack, text, text_editor, Text,
+    stack, text, text_editor, toggler, Text,
 };
 use iced::{highlighter, Color};
 use iced::{Alignment, Element, Length, Task, Theme};
@@ -28,6 +28,7 @@ pub struct Editor {
     theme: Theme,
     markdown_text: Vec<markdown::Item>,
     markdown_settings: markdown::Settings,
+    markdown_preview_open: bool,
     shortcut_palette_open: bool,
 }
 
@@ -44,6 +45,7 @@ enum Message {
     Format(TextStyle),
     LinkClicked(markdown::Url),
     NoOp,
+    ShowMarkdownPreview(bool),
     DeleteLine,
     DeleteWord,
     ShortcutPaletteToggle,
@@ -60,6 +62,7 @@ impl Editor {
                 theme: Theme::default(),
                 markdown_text: markdown::parse("Write your **Markdown** text here.").collect(),
                 markdown_settings: markdown::Settings::with_text_size(DEFAULT_TEXT_SIZE),
+                markdown_preview_open: false,
                 shortcut_palette_open: false,
             },
             Task::none(),
@@ -118,7 +121,12 @@ impl Editor {
         .style(container::rounded_box);
 
         let content = column![
-            self.menubar.view().map(Message::Menu),
+            row![
+                self.menubar.view().map(Message::Menu),
+                toggler(self.markdown_preview_open)
+                        .label("Show Markdown preview")
+                        .on_toggle(Message::ShowMarkdownPreview)
+            ],
             self.format_bar.view().map(Message::Format),
             row![
                 text_editor(&self.content)
@@ -172,14 +180,16 @@ impl Editor {
                             _ => text_editor::Binding::from_key_press(key_press),
                         }
                     }),
-                scrollable(
-                    markdown::view(
-                        &self.markdown_text,
-                        self.markdown_settings,
-                        markdown::Style::from_palette(self.theme.clone().palette()),
+                if self.markdown_preview_open {
+                    scrollable(
+                        markdown::view(
+                            &self.markdown_text,
+                            self.markdown_settings,
+                            markdown::Style::from_palette(self.theme.clone().palette()),
+                        )
+                        .map(Message::LinkClicked)
                     )
-                    .map(Message::LinkClicked),
-                )
+                } else { scrollable(row![]) }
             ]
             .spacing(20)
             .align_y(Alignment::Start),
@@ -273,6 +283,9 @@ impl Editor {
             }
             Message::ShortcutPaletteToggle => {
                 self.shortcut_palette_open = !self.shortcut_palette_open;
+            }
+            Message::ShowMarkdownPreview(toggled) => {
+                self.markdown_preview_open = toggled;
             }
         }
         Task::none()
