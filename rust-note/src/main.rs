@@ -183,20 +183,33 @@ impl Editor {
                                 button
                             }
                         ]
-                        .spacing(10),
+                        .spacing(10)
+                        .padding(10)
                     )
                     .push(
                         TabId::JoinSession,
                         TabLabel::Text(String::from("Join Session")),
+                        column![
                             text_input("Enter server address", &self.modal_content.server_input)
                                 .on_input(Message::LoginServerChanged)
                                 .padding(5),
+                            {   let mut button = button("Start Session").style(button::secondary);
+                                if !(self.modal_content.server_input.is_empty()) {
+                                    button = button.on_press(Message::LoginButtonPressed).style(button::primary)
+                                }
+                                button
+                            }
+                        ]
+                        .spacing(10)
+                        .padding(10)
                     )
-                    .set_active_tab(&self.active_tab),
+                    .tab_label_padding(10)
+                    .set_active_tab(&self.active_tab)
             ]
             .padding(10)
             .spacing(20),
         )
+        .height(Length::Fixed(300.0))
         .width(300)
         .padding(10)
         .style(container::rounded_box);
@@ -207,7 +220,8 @@ impl Editor {
                 toggler(self.markdown_preview_open)
                         .label("Show Markdown preview")
                         .on_toggle(Message::ShowMarkdownPreview)
-            ],
+            ]
+            .spacing(15),
             self.format_bar.view().map(Message::Format),
             row![
                 text_editor(&self.content)
@@ -375,26 +389,23 @@ impl Editor {
             Message::ShowMarkdownPreview(toggled) => {
                 self.markdown_preview_open = toggled;
             }
-        // Update the name input
             Message::LoginNameChanged(name) => {
                 self.modal_content.name_input = name;
             }
-
-            // Update the server input
             Message::LoginServerChanged(server) => {
                 self.modal_content.server_input = server;
             }
-
-            // Handle login button press
             Message::LoginButtonPressed => { }
-            // Toggle the login modal
             Message::SessionModalToggle => {
                 self.session_modal_open = !self.session_modal_open;
                 self.modal_content.name_input.clear();
                 self.modal_content.server_input.clear();
             }
             Message::TabSelected(selected) => {
-                self.active_tab = selected
+                self.active_tab = selected;
+                if !(self.modal_content.server_input.is_empty()) {
+                    self.modal_content.server_input.clear();
+                }
             }
         }
         Task::none()
