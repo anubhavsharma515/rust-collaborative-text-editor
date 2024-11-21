@@ -2,7 +2,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iced::widget::{button, column, pick_list, row, text_editor};
+use iced::widget::{button, pick_list, row};
 use iced::{Alignment, Element, Length, Task, Theme};
 
 #[derive(Debug, Clone)]

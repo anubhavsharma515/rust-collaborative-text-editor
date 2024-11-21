@@ -115,6 +115,9 @@ impl Editor {
         markdown_settings.text_size = iced::Pixels(50.0);
 
         let status = row![
+            button("Collaborate")
+                .on_press(Message::SessionModalToggle)
+                .style(button::primary),
             text(if let Some(path) = &self.file {
                 let path = path.display().to_string();
 
@@ -124,7 +127,7 @@ impl Editor {
                     path
                 }
             } else {
-                String::from("New file")
+                String::from("")
             }),
             horizontal_space(),
             text({
@@ -146,6 +149,9 @@ impl Editor {
                     Text::new("cmd + backspace: Delete line"),
                     Text::new(format!(
                         "cmd + {SHORTCUT_PALETTE_HOTKEY}: Toggle shortcut palette"
+                    )),
+                    Text::new(format!(
+                        "cmd + {SESSION_MODAL_HOTKEY}: Toggle session modal"
                     )),
                 ]
                 .spacing(10)
@@ -170,16 +176,21 @@ impl Editor {
                             text_input("Enter server address", &self.modal_content.server_input)
                                 .on_input(Message::LoginServerChanged)
                                 .padding(5),
-                            button("Login")
-                                .on_press(Message::LoginButtonPressed)
-                                .style(button::primary),
+                            {   let mut button = button("Start Session").style(button::secondary);
+                                if !(self.modal_content.name_input.is_empty() | self.modal_content.server_input.is_empty()) {
+                                    button = button.on_press(Message::LoginButtonPressed).style(button::primary)
+                                }
+                                button
+                            }
                         ]
                         .spacing(10),
                     )
                     .push(
                         TabId::JoinSession,
                         TabLabel::Text(String::from("Join Session")),
-                        text("Session ID"),
+                            text_input("Enter server address", &self.modal_content.server_input)
+                                .on_input(Message::LoginServerChanged)
+                                .padding(5),
                     )
                     .set_active_tab(&self.active_tab),
             ]
@@ -280,12 +291,6 @@ impl Editor {
         } else {
             content.into()
         }
-
-        // if self.session_modal_open {
-        //     modal(content, session_modal, Message::ShortcutPaletteToggle)
-        // } else {
-        //     content.into()
-        // }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
@@ -387,9 +392,6 @@ impl Editor {
                 self.session_modal_open = !self.session_modal_open;
                 self.modal_content.name_input.clear();
                 self.modal_content.server_input.clear();
-                if self.modal_content.name_input.is_empty() {
-                    self.modal_content.name_input = String::from("Guest");
-                }
             }
             Message::TabSelected(selected) => {
                 self.active_tab = selected
