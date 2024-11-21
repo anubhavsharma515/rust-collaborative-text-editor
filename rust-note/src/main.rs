@@ -6,8 +6,11 @@ use iced::widget::{
     button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
     stack, text, text_input, text_editor, toggler, Text, Container
 };
+
 use iced::{highlighter, Color};
 use iced::{Alignment, Element, Length, Task, Theme};
+
+use iced_aw::{Tabs, TabLabel};
 
 // Custom widgets
 mod widgets;
@@ -19,6 +22,7 @@ const BOLD_HOTKEY: &str = "b";
 const ITALIC_HOTKEY: &str = "i";
 const STRIKETHROUGH_HOTKEY: &str = "f";
 const SHORTCUT_PALETTE_HOTKEY: &str = "p";
+const SESSION_MODAL_HOTKEY: &str = "n";
 
 pub struct SessionModal {
     pub name_input: String,
@@ -45,6 +49,8 @@ pub struct Editor {
     modal_content: SessionModal,
     markdown_preview_open: bool,
     shortcut_palette_open: bool,
+    session_modal_open: bool,
+    active_tab: TabId
 }
 
 pub fn main() -> iced::Result {
@@ -64,11 +70,20 @@ enum Message {
     DeleteLine,
     DeleteWord,
     ShortcutPaletteToggle,
+    SessionModalToggle,
     LoginNameChanged(String),
     LoginServerChanged(String),
     LoginButtonPressed,
-    ToggleLoginModal,
+    TabSelected(TabId),
 }
+
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+enum TabId {
+   #[default]
+   StartSession,
+   JoinSession,
+}
+
 
 impl Editor {
     fn new() -> (Self, Task<Message>) {
@@ -84,6 +99,8 @@ impl Editor {
                 markdown_settings: markdown::Settings::with_text_size(DEFAULT_TEXT_SIZE),
                 markdown_preview_open: false,
                 shortcut_palette_open: false,
+                session_modal_open: false,
+                active_tab: TabId::StartSession,
             },
             Task::none(),
         )
@@ -141,20 +158,32 @@ impl Editor {
 
         let session_modal: Container<Message> = container(
             column![
-                text("Login").size(24),
-                column![
-                    text_input("Enter your name", &self.modal_content.name_input)
-                        .on_input(Message::LoginNameChanged)
-                        .padding(5),
-                    text_input("Enter server address", &self.modal_content.server_input)
-                        .on_input(Message::LoginServerChanged)
-                        .padding(5),
-                    button("Login")
-                        .on_press(Message::LoginButtonPressed)
-                        .style(button::primary),
-                ]
-                .spacing(10)
+                text("Colab").size(24),
+                Tabs::new(Message::TabSelected)
+                    .push(
+                        TabId::StartSession,
+                        TabLabel::Text(String::from("Start Session")),
+                        column![
+                            text_input("Enter your name", &self.modal_content.name_input)
+                                .on_input(Message::LoginNameChanged)
+                                .padding(5),
+                            text_input("Enter server address", &self.modal_content.server_input)
+                                .on_input(Message::LoginServerChanged)
+                                .padding(5),
+                            button("Login")
+                                .on_press(Message::LoginButtonPressed)
+                                .style(button::primary),
+                        ]
+                        .spacing(10),
+                    )
+                    .push(
+                        TabId::JoinSession,
+                        TabLabel::Text(String::from("Join Session")),
+                        text("Session ID"),
+                    )
+                    .set_active_tab(&self.active_tab),
             ]
+            .padding(10)
             .spacing(20),
         )
         .width(300)
@@ -218,6 +247,11 @@ impl Editor {
                             {
                                 Some(text_editor::Binding::Custom(Message::ShortcutPaletteToggle))
                             }
+                            keyboard::Key::Character(SESSION_MODAL_HOTKEY)
+                                if key_press.modifiers.command() =>
+                            {
+                                Some(text_editor::Binding::Custom(Message::SessionModalToggle))
+                            }
                             _ => text_editor::Binding::from_key_press(key_press),
                         }
                     }),
@@ -240,7 +274,9 @@ impl Editor {
         .spacing(10);
 
         if self.shortcut_palette_open {
-            modal(content, session_modal, Message::ShortcutPaletteToggle)
+            modal(content, shortcut_palette, Message::ShortcutPaletteToggle)
+        } else if self.session_modal_open {
+            modal(content, session_modal, Message::SessionModalToggle)
         } else {
             content.into()
         }
@@ -347,10 +383,16 @@ impl Editor {
             // Handle login button press
             Message::LoginButtonPressed => { }
             // Toggle the login modal
-            Message::ToggleLoginModal => {
+            Message::SessionModalToggle => {
+                self.session_modal_open = !self.session_modal_open;
+                self.modal_content.name_input.clear();
+                self.modal_content.server_input.clear();
                 if self.modal_content.name_input.is_empty() {
                     self.modal_content.name_input = String::from("Guest");
                 }
+            }
+            Message::TabSelected(selected) => {
+                self.active_tab = selected
             }
         }
         Task::none()
