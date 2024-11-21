@@ -1,10 +1,11 @@
 use std::ffi;
 use std::path::{Path, PathBuf};
 
+use iced::mouse;
 use iced::keyboard;
 use iced::widget::{
     button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
-    stack, text, text_input, text_editor, toggler, Text, Container
+    stack, text, text_input, text_editor, toggler, Text, Container, Stack
 };
 
 use iced::{highlighter, Color};
@@ -40,6 +41,7 @@ impl Default for SessionModal {
 
 pub struct Editor {
     content: text_editor::Content,
+    cursor_marker: CursorMarker,
     menubar: MenuBar,
     format_bar: FormatBar,
     file: Option<PathBuf>,
@@ -84,12 +86,52 @@ enum TabId {
    JoinSession,
 }
 
+use iced::widget::canvas::{self, Canvas, Frame, Path as icedPath};
+use iced::{Point, Rectangle, Size, Renderer};
+
+#[derive(Clone, Copy)]
+pub struct CursorMarker {
+    pub x: f32,
+    pub y: f32,
+}
+
+impl CursorMarker {
+    pub fn new(x: f32, y: f32) -> Self {
+        Self { x, y, }
+    }
+}
+
+impl<Message> canvas::Program<Message> for CursorMarker {
+    // No internal state
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let mut frame = Frame::new(renderer, bounds.size());
+        // let offset_x = 2.0; // Offset for padding/margin adjustments
+        // let offset_y = 2.0; // Offset for padding/margin adjustments
+
+        let rectangle = icedPath::rectangle(
+            Point::new(self.x, self.y),
+            Size::new(5.5, 24.0),
+        );
+        frame.fill(&rectangle, Color::from_rgb(0.0, 0.8, 0.2));
+        vec![frame.into_geometry()]
+    }
+}
 
 impl Editor {
     fn new() -> (Self, Task<Message>) {
         (
             Self {
                 content: text_editor::Content::new(),
+                cursor_marker: CursorMarker::new(0.2, 0.2),
                 menubar: MenuBar::new(),
                 format_bar: FormatBar::new(),
                 file: None,
@@ -214,87 +256,102 @@ impl Editor {
         .padding(10)
         .style(container::rounded_box);
 
+        let marker: Canvas<CursorMarker, Message> = Canvas::new(self.cursor_marker.clone())
+            .width(Length::FillPortion(1))
+            .height(Length::Fill);
+
         let content = column![
             row![
                 self.menubar.view().map(Message::Menu),
                 toggler(self.markdown_preview_open)
-                        .label("Show Markdown preview")
-                        .on_toggle(Message::ShowMarkdownPreview)
+                    .label("Show Markdown preview")
+                    .on_toggle(Message::ShowMarkdownPreview)
             ]
             .spacing(15),
             self.format_bar.view().map(Message::Format),
             row![
-                text_editor(&self.content)
-                    .highlight(
-                        self.file
-                            .as_deref()
-                            .and_then(Path::extension)
-                            .and_then(ffi::OsStr::to_str)
-                            .unwrap_or("rs"),
-                        highlighter::Theme::SolarizedDark,
-                    )
-                    .height(Length::FillPortion(1))
-                    .on_action(Message::Edit)
-                    .key_binding(|key_press| {
-                        match key_press.key.as_ref() {
-                            keyboard::Key::Character(BOLD_HOTKEY)
-                                if key_press.modifiers.command() =>
-                            {
-                                Some(text_editor::Binding::Custom(Message::Format(
-                                    TextStyle::Bold,
-                                )))
-                            }
-                            keyboard::Key::Character(ITALIC_HOTKEY)
-                                if key_press.modifiers.command() =>
-                            {
-                                Some(text_editor::Binding::Custom(Message::Format(
-                                    TextStyle::Italic,
-                                )))
-                            }
-                            keyboard::Key::Character(STRIKETHROUGH_HOTKEY)
-                                if key_press.modifiers.command() =>
-                            {
-                                Some(text_editor::Binding::Custom(Message::Format(
-                                    TextStyle::Strikethrough,
-                                )))
-                            }
-                            keyboard::Key::Named(keyboard::key::Named::Backspace)
-                                if key_press.modifiers.command() =>
-                            {
-                                if key_press.modifiers.alt() {
-                                    Some(text_editor::Binding::Custom(Message::DeleteWord))
-                                } else {
-                                    Some(text_editor::Binding::Custom(Message::DeleteLine))
-                                }
-                            }
-                            keyboard::Key::Character(SHORTCUT_PALETTE_HOTKEY)
-                                if key_press.modifiers.command() =>
-                            {
-                                Some(text_editor::Binding::Custom(Message::ShortcutPaletteToggle))
-                            }
-                            keyboard::Key::Character(SESSION_MODAL_HOTKEY)
-                                if key_press.modifiers.command() =>
-                            {
-                                Some(text_editor::Binding::Custom(Message::SessionModalToggle))
-                            }
-                            _ => text_editor::Binding::from_key_press(key_press),
-                        }
-                    }),
-                if self.markdown_preview_open {
-                    scrollable(
-                        markdown::view(
-                            &self.markdown_text,
-                            self.markdown_settings,
-                            markdown::Style::from_palette(self.theme.clone().palette()),
+                Stack::with_children(vec![
+                    text_editor(&self.content)
+                        .highlight(
+                            self.file
+                                .as_deref()
+                                .and_then(Path::extension)
+                                .and_then(ffi::OsStr::to_str)
+                                .unwrap_or("rs"),
+                            highlighter::Theme::SolarizedDark,
                         )
-                        .map(Message::LinkClicked)
-                    )
-                } else { scrollable(row![]) }
+                        .wrapping(text::Wrapping::WordOrGlyph)
+                        .width(300)
+                        .height(Length::FillPortion(1))
+                        .on_action(Message::Edit)
+                        .key_binding(|key_press| {
+                            match key_press.key.as_ref() {
+                                keyboard::Key::Character(BOLD_HOTKEY)
+                                    if key_press.modifiers.command() =>
+                                {
+                                    Some(text_editor::Binding::Custom(Message::Format(
+                                        TextStyle::Bold,
+                                    )))
+                                }
+                                keyboard::Key::Character(ITALIC_HOTKEY)
+                                    if key_press.modifiers.command() =>
+                                {
+                                    Some(text_editor::Binding::Custom(Message::Format(
+                                        TextStyle::Italic,
+                                    )))
+                                }
+                                keyboard::Key::Character(STRIKETHROUGH_HOTKEY)
+                                    if key_press.modifiers.command() =>
+                                {
+                                    Some(text_editor::Binding::Custom(Message::Format(
+                                        TextStyle::Strikethrough,
+                                    )))
+                                }
+                                keyboard::Key::Named(keyboard::key::Named::Backspace)
+                                    if key_press.modifiers.command() =>
+                                {
+                                    if key_press.modifiers.alt() {
+                                        Some(text_editor::Binding::Custom(Message::DeleteWord))
+                                    } else {
+                                        Some(text_editor::Binding::Custom(Message::DeleteLine))
+                                    }
+                                }
+                                keyboard::Key::Character(SHORTCUT_PALETTE_HOTKEY)
+                                    if key_press.modifiers.command() =>
+                                {
+                                    Some(text_editor::Binding::Custom(Message::ShortcutPaletteToggle))
+                                }
+                                keyboard::Key::Character(SESSION_MODAL_HOTKEY)
+                                    if key_press.modifiers.command() =>
+                                {
+                                    Some(text_editor::Binding::Custom(Message::SessionModalToggle))
+                                }
+                                _ => text_editor::Binding::from_key_press(key_press),
+                            }
+                        }).into(),
+                    marker.into()])
+                    .width(Length::FillPortion(1))
+                    .height(Length::FillPortion(1)),
+                    if self.markdown_preview_open {
+                        scrollable(
+                            markdown::view(
+                                &self.markdown_text,
+                                self.markdown_settings,
+                                markdown::Style::from_palette(self.theme.clone().palette()),
+                            )
+                            .map(Message::LinkClicked)
+                        )
+                        .width(Length::FillPortion(1))
+                        .height(Length::FillPortion(1))
+                    } else {
+                        scrollable(column![])
+                            .height(Length::FillPortion(1))
+                    }, 
+                ]
+                .spacing(20) 
+                .align_y(Alignment::Start),
+                status, // Add the status widget here
             ]
-            .spacing(20)
-            .align_y(Alignment::Start),
-            status, // Add the status widget here
-        ]
         .align_x(Alignment::Center)
         .spacing(10);
 
@@ -311,6 +368,8 @@ impl Editor {
         match message {
             Message::Edit(action) => {
                 self.content.perform(action);
+                let (x, y) = self.cursor_position_in_pixels();
+                self.cursor_marker = CursorMarker::new(x, y);
 
                 // Update markdown preview with the editor's text content
                 self.markdown_text = markdown::parse(&self.content.text()).collect()
@@ -413,6 +472,19 @@ impl Editor {
 
     fn theme(&self) -> Theme {
         self.theme.clone()
+    }
+
+    fn cursor_position_in_pixels(&self) -> (f32, f32) {
+        let (line, col) = self.content.cursor_position();
+
+        // Assuming you know font metrics
+        let line_height = 24.0; // Adjust as per your font size
+        let char_width = 5.5;  // Adjust as per your font width
+
+        (
+            col as f32 * char_width,
+            line as f32 * line_height,
+        )
     }
 
     fn toggle_formatting(&mut self, format: TextStyle) {
