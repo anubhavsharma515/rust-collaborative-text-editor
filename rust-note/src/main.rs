@@ -1,17 +1,18 @@
 use std::ffi;
 use std::path::{Path, PathBuf};
 
-use iced::mouse;
+use iced::Pixels;
 use iced::keyboard;
+use iced::mouse;
 use iced::widget::{
-    button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
-    stack, text, text_input, text_editor, toggler, Text, Container, Stack
+    button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
+    scrollable, stack, text, text_editor, text_input, toggler, Container, Stack, Text, TextEditor,
 };
 
 use iced::{highlighter, Color};
 use iced::{Alignment, Element, Length, Task, Theme};
 
-use iced_aw::{Tabs, TabLabel};
+use iced_aw::{TabLabel, Tabs};
 
 // Custom widgets
 mod widgets;
@@ -52,7 +53,7 @@ pub struct Editor {
     markdown_preview_open: bool,
     shortcut_palette_open: bool,
     session_modal_open: bool,
-    active_tab: TabId
+    active_tab: TabId,
 }
 
 pub fn main() -> iced::Result {
@@ -81,23 +82,22 @@ enum Message {
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 enum TabId {
-   #[default]
-   StartSession,
-   JoinSession,
+    #[default]
+    StartSession,
+    JoinSession,
 }
 
 use iced::widget::canvas::{self, Canvas, Frame, Path as icedPath};
-use iced::{Point, Rectangle, Size, Renderer};
+use iced::{Point, Rectangle, Renderer, Size};
 
 #[derive(Clone, Copy)]
 pub struct CursorMarker {
-    pub x: f32,
     pub y: f32,
 }
 
 impl CursorMarker {
-    pub fn new(x: f32, y: f32) -> Self {
-        Self { x, y, }
+    pub fn new(y: f32) -> Self {
+        Self { y }
     }
 }
 
@@ -117,10 +117,7 @@ impl<Message> canvas::Program<Message> for CursorMarker {
         // let offset_x = 2.0; // Offset for padding/margin adjustments
         // let offset_y = 2.0; // Offset for padding/margin adjustments
 
-        let rectangle = icedPath::rectangle(
-            Point::new(self.x, self.y),
-            Size::new(5.5, 24.0),
-        );
+        let rectangle = icedPath::rectangle(Point::new(0.0, self.y), Size::new(5.5, 21.0));
         frame.fill(&rectangle, Color::from_rgb(0.0, 0.8, 0.2));
         vec![frame.into_geometry()]
     }
@@ -131,7 +128,7 @@ impl Editor {
         (
             Self {
                 content: text_editor::Content::new(),
-                cursor_marker: CursorMarker::new(0.2, 0.2),
+                cursor_marker: CursorMarker::new(0.2),
                 menubar: MenuBar::new(),
                 format_bar: FormatBar::new(),
                 file: None,
@@ -174,8 +171,11 @@ impl Editor {
             horizontal_space(),
             text({
                 let (line, column) = self.content.cursor_position();
+                let content = self.content.text();
+                let words = &content.split(" ").count();
+                let lines = &content.split("\n").count();
 
-                format!("Line {}, Columns {}", line + 1, column + 1)
+                format!("Words: {} | Lines: {} | Line {}, Columns {}", words - 1, lines - 1, line + 1, column + 1)
             })
         ]
         .spacing(10);
@@ -218,9 +218,14 @@ impl Editor {
                             text_input("Enter server address", &self.modal_content.server_input)
                                 .on_input(Message::LoginServerChanged)
                                 .padding(5),
-                            {   let mut button = button("Start Session").style(button::secondary);
-                                if !(self.modal_content.name_input.is_empty() | self.modal_content.server_input.is_empty()) {
-                                    button = button.on_press(Message::LoginButtonPressed).style(button::primary)
+                            {
+                                let mut button = button("Start Session").style(button::secondary);
+                                if !(self.modal_content.name_input.is_empty()
+                                    | self.modal_content.server_input.is_empty())
+                                {
+                                    button = button
+                                        .on_press(Message::LoginButtonPressed)
+                                        .style(button::primary)
                                 }
                                 button
                             }
@@ -235,9 +240,12 @@ impl Editor {
                             text_input("Enter server address", &self.modal_content.server_input)
                                 .on_input(Message::LoginServerChanged)
                                 .padding(5),
-                            {   let mut button = button("Start Session").style(button::secondary);
+                            {
+                                let mut button = button("Start Session").style(button::secondary);
                                 if !(self.modal_content.server_input.is_empty()) {
-                                    button = button.on_press(Message::LoginButtonPressed).style(button::primary)
+                                    button = button
+                                        .on_press(Message::LoginButtonPressed)
+                                        .style(button::primary)
                                 }
                                 button
                             }
@@ -260,6 +268,53 @@ impl Editor {
             .width(Length::FillPortion(1))
             .height(Length::Fill);
 
+        let editor = TextEditor::new(&self.content)
+            .line_height(text::LineHeight::Absolute(Pixels(21.0)))
+            .highlight(
+                self.file
+                    .as_deref()
+                    .and_then(Path::extension)
+                    .and_then(ffi::OsStr::to_str)
+                    .unwrap_or("txt"),
+                highlighter::Theme::SolarizedDark,
+            )
+            .wrapping(text::Wrapping::WordOrGlyph)
+            .width(300)
+            .height(Length::FillPortion(1))
+            .on_action(Message::Edit)
+            .key_binding(|key_press| match key_press.key.as_ref() {
+                keyboard::Key::Character(BOLD_HOTKEY) if key_press.modifiers.command() => Some(
+                    text_editor::Binding::Custom(Message::Format(TextStyle::Bold)),
+                ),
+                keyboard::Key::Character(ITALIC_HOTKEY) if key_press.modifiers.command() => Some(
+                    text_editor::Binding::Custom(Message::Format(TextStyle::Italic)),
+                ),
+                keyboard::Key::Character(STRIKETHROUGH_HOTKEY) if key_press.modifiers.command() => {
+                    Some(text_editor::Binding::Custom(Message::Format(
+                        TextStyle::Strikethrough,
+                    )))
+                }
+                keyboard::Key::Named(keyboard::key::Named::Backspace)
+                    if key_press.modifiers.command() =>
+                {
+                    if key_press.modifiers.alt() {
+                        Some(text_editor::Binding::Custom(Message::DeleteWord))
+                    } else {
+                        Some(text_editor::Binding::Custom(Message::DeleteLine))
+                    }
+                }
+                keyboard::Key::Character(SHORTCUT_PALETTE_HOTKEY)
+                    if key_press.modifiers.command() =>
+                {
+                    Some(text_editor::Binding::Custom(Message::ShortcutPaletteToggle))
+                }
+                keyboard::Key::Character(SESSION_MODAL_HOTKEY) if key_press.modifiers.command() => {
+                    Some(text_editor::Binding::Custom(Message::SessionModalToggle))
+                }
+                _ => text_editor::Binding::from_key_press(key_press),
+            });
+
+
         let content = column![
             row![
                 self.menubar.view().map(Message::Menu),
@@ -270,88 +325,28 @@ impl Editor {
             .spacing(15),
             self.format_bar.view().map(Message::Format),
             row![
-                Stack::with_children(vec![
-                    text_editor(&self.content)
-                        .highlight(
-                            self.file
-                                .as_deref()
-                                .and_then(Path::extension)
-                                .and_then(ffi::OsStr::to_str)
-                                .unwrap_or("rs"),
-                            highlighter::Theme::SolarizedDark,
-                        )
-                        .wrapping(text::Wrapping::WordOrGlyph)
-                        .width(300)
-                        .height(Length::FillPortion(1))
-                        .on_action(Message::Edit)
-                        .key_binding(|key_press| {
-                            match key_press.key.as_ref() {
-                                keyboard::Key::Character(BOLD_HOTKEY)
-                                    if key_press.modifiers.command() =>
-                                {
-                                    Some(text_editor::Binding::Custom(Message::Format(
-                                        TextStyle::Bold,
-                                    )))
-                                }
-                                keyboard::Key::Character(ITALIC_HOTKEY)
-                                    if key_press.modifiers.command() =>
-                                {
-                                    Some(text_editor::Binding::Custom(Message::Format(
-                                        TextStyle::Italic,
-                                    )))
-                                }
-                                keyboard::Key::Character(STRIKETHROUGH_HOTKEY)
-                                    if key_press.modifiers.command() =>
-                                {
-                                    Some(text_editor::Binding::Custom(Message::Format(
-                                        TextStyle::Strikethrough,
-                                    )))
-                                }
-                                keyboard::Key::Named(keyboard::key::Named::Backspace)
-                                    if key_press.modifiers.command() =>
-                                {
-                                    if key_press.modifiers.alt() {
-                                        Some(text_editor::Binding::Custom(Message::DeleteWord))
-                                    } else {
-                                        Some(text_editor::Binding::Custom(Message::DeleteLine))
-                                    }
-                                }
-                                keyboard::Key::Character(SHORTCUT_PALETTE_HOTKEY)
-                                    if key_press.modifiers.command() =>
-                                {
-                                    Some(text_editor::Binding::Custom(Message::ShortcutPaletteToggle))
-                                }
-                                keyboard::Key::Character(SESSION_MODAL_HOTKEY)
-                                    if key_press.modifiers.command() =>
-                                {
-                                    Some(text_editor::Binding::Custom(Message::SessionModalToggle))
-                                }
-                                _ => text_editor::Binding::from_key_press(key_press),
-                            }
-                        }).into(),
-                    marker.into()])
+                Stack::with_children(vec![editor.into(), marker.into()])
                     .width(Length::FillPortion(1))
                     .height(Length::FillPortion(1)),
-                    if self.markdown_preview_open {
-                        scrollable(
-                            markdown::view(
-                                &self.markdown_text,
-                                self.markdown_settings,
-                                markdown::Style::from_palette(self.theme.clone().palette()),
-                            )
-                            .map(Message::LinkClicked)
+                if self.markdown_preview_open {
+                    scrollable(
+                        markdown::view(
+                            &self.markdown_text,
+                            self.markdown_settings,
+                            markdown::Style::from_palette(self.theme.clone().palette()),
                         )
-                        .width(Length::FillPortion(1))
-                        .height(Length::FillPortion(1))
-                    } else {
-                        scrollable(column![])
-                            .height(Length::FillPortion(1))
-                    }, 
-                ]
-                .spacing(20) 
-                .align_y(Alignment::Start),
-                status, // Add the status widget here
+                        .map(Message::LinkClicked),
+                    )
+                    .width(Length::FillPortion(1))
+                    .height(Length::FillPortion(1))
+                } else {
+                    scrollable(column![]).width(Length::Shrink)
+                },
             ]
+            .spacing(20)
+            .align_y(Alignment::Start),
+            status, // Add the status widget here
+        ]
         .align_x(Alignment::Center)
         .spacing(10);
 
@@ -368,8 +363,8 @@ impl Editor {
         match message {
             Message::Edit(action) => {
                 self.content.perform(action);
-                let (x, y) = self.cursor_position_in_pixels();
-                self.cursor_marker = CursorMarker::new(x, y);
+                let line = self.cursor_position_in_pixels();
+                self.cursor_marker = CursorMarker::new(line);
 
                 // Update markdown preview with the editor's text content
                 self.markdown_text = markdown::parse(&self.content.text()).collect()
@@ -454,7 +449,7 @@ impl Editor {
             Message::LoginServerChanged(server) => {
                 self.modal_content.server_input = server;
             }
-            Message::LoginButtonPressed => { }
+            Message::LoginButtonPressed => {}
             Message::SessionModalToggle => {
                 self.session_modal_open = !self.session_modal_open;
                 self.modal_content.name_input.clear();
@@ -474,17 +469,13 @@ impl Editor {
         self.theme.clone()
     }
 
-    fn cursor_position_in_pixels(&self) -> (f32, f32) {
-        let (line, col) = self.content.cursor_position();
+    fn cursor_position_in_pixels(&self) -> f32 {
+        let (line, _) = self.content.cursor_position();
 
         // Assuming you know font metrics
-        let line_height = 24.0; // Adjust as per your font size
-        let char_width = 5.5;  // Adjust as per your font width
+        let line_height = 21.0; // Adjust as per your font size
 
-        (
-            col as f32 * char_width,
-            line as f32 * line_height,
-        )
+        line as f32 * line_height
     }
 
     fn toggle_formatting(&mut self, format: TextStyle) {
