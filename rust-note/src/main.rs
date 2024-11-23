@@ -1,7 +1,7 @@
 use std::ffi;
 use std::path::{Path, PathBuf};
 
-use iced::Pixels;
+use iced::{Font, Pixels};
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
@@ -17,7 +17,7 @@ use iced_aw::{TabLabel, Tabs};
 // Custom widgets
 mod widgets;
 
-use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_TEXT_SIZE};
+use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
 use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage};
 
 const BOLD_HOTKEY: &str = "b";
@@ -58,6 +58,7 @@ pub struct Editor {
 
 pub fn main() -> iced::Result {
     iced::application(Editor::title, Editor::update, Editor::view)
+        .font(include_bytes!("../fonts/format-bar-icons.ttf").as_slice())
         .theme(Editor::theme)
         .run_with(Editor::new)
 }
@@ -135,7 +136,7 @@ impl Editor {
                 theme: Theme::default(),
                 modal_content: SessionModal::default(),
                 markdown_text: markdown::parse("Write your **Markdown** text here.").collect(),
-                markdown_settings: markdown::Settings::with_text_size(DEFAULT_TEXT_SIZE),
+                markdown_settings: markdown::Settings::with_text_size(DEFAULT_FONT_SIZE),
                 markdown_preview_open: false,
                 shortcut_palette_open: false,
                 session_modal_open: false,
@@ -416,7 +417,7 @@ impl Editor {
                         let text_size = if let Ok(size) = size.parse::<f32>() {
                             iced::Pixels::from(size)
                         } else {
-                            iced::Pixels::from(DEFAULT_TEXT_SIZE)
+                            iced::Pixels::from(DEFAULT_FONT_SIZE)
                         };
 
                         self.markdown_settings = markdown::Settings::with_text_size(text_size);
