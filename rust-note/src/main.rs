@@ -1,7 +1,9 @@
 use std::ffi;
 use std::path::{Path, PathBuf};
 
-use iced::{Font, Pixels};
+use axum::routing::get;
+use axum::Router;
+use iced::{window, Font, Pixels};
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
@@ -17,6 +19,8 @@ use iced_aw::{TabLabel, Tabs};
 // Custom widgets
 mod widgets;
 
+use structopt::StructOpt;
+use tokio::task::JoinHandle;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
 use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage};
 
@@ -40,6 +44,12 @@ impl Default for SessionModal {
     }
 }
 
+#[derive(Debug, StructOpt)]
+struct Opt {
+    #[structopt(short, long)]
+    host_file: bool,
+}
+
 pub struct Editor {
     content: text_editor::Content,
     cursor_marker: CursorMarker,
@@ -54,13 +64,34 @@ pub struct Editor {
     shortcut_palette_open: bool,
     session_modal_open: bool,
     active_tab: TabId,
+    server_thread: Option<JoinHandle<()>>,
 }
 
-pub fn main() -> iced::Result {
+#[tokio::main]
+pub async fn main() -> iced::Result {
+    let opt = Opt::from_args();
+
+    let server_thread = if opt.host_file {
+        let app = Router::new()
+        .route("/status", get(|| async {
+            "UP"
+        }));
+
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
+        println!("Server running on: http://localhost:8080");
+        Some(tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap()
+        }))
+    } else {
+        None
+    };
+
     iced::application(Editor::title, Editor::update, Editor::view)
         .font(include_bytes!("../fonts/format-bar-icons.ttf").as_slice())
         .theme(Editor::theme)
-        .run_with(Editor::new)
+        .exit_on_close_request(false)
+        .subscription(Editor::subscription)
+        .run_with(|| Editor::new(server_thread))
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +110,7 @@ enum Message {
     LoginServerChanged(String),
     LoginButtonPressed,
     TabSelected(TabId),
+    CloseWindow(iced::window::Id),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -125,7 +157,7 @@ impl<Message> canvas::Program<Message> for CursorMarker {
 }
 
 impl Editor {
-    fn new() -> (Self, Task<Message>) {
+    fn new(server_thread: Option<JoinHandle<()>>) -> (Self, Task<Message>) {
         (
             Self {
                 content: text_editor::Content::new(),
@@ -141,6 +173,7 @@ impl Editor {
                 shortcut_palette_open: false,
                 session_modal_open: false,
                 active_tab: TabId::StartSession,
+                server_thread,
             },
             Task::none(),
         )
@@ -148,6 +181,17 @@ impl Editor {
 
     fn title(&self) -> String {
         String::from("rust-note")
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        window::events().map(|(id, evt)| {
+            match evt {
+                iced::window::Event::CloseRequested => {
+                    Message::CloseWindow(id)
+                },
+                _ => Message::NoOp,
+            }
+        })
     }
 
     fn view(&self) -> Element<'_, Message> {
@@ -461,6 +505,15 @@ impl Editor {
                 if !(self.modal_content.server_input.is_empty()) {
                     self.modal_content.server_input.clear();
                 }
+            }
+            Message::CloseWindow(id) => {
+                println!("Window with id {:?} closed", id);
+                println!("Closing server...");
+                if let Some(server_thread) = &self.server_thread {
+                    server_thread.abort();
+                }
+
+                return window::close(id);
             }
         }
         Task::none()
