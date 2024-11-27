@@ -2,9 +2,7 @@ use std::ffi;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use axum::routing::get;
-use axum::Router;
-use iced::{window, Font, Pixels};
+use iced::{window, Pixels};
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
@@ -19,7 +17,10 @@ use iced_aw::{TabLabel, Tabs};
 
 // Custom widgets
 mod widgets;
+mod handlers;
+mod server;
 
+use server::start_server;
 use structopt::StructOpt;
 use tokio::task::JoinHandle;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
@@ -49,6 +50,9 @@ impl Default for SessionModal {
 struct Opt {
     #[structopt(short, long)]
     host_file: bool,
+
+    #[structopt(long)]
+    password: Option<String>
 }
 
 pub struct Editor {
@@ -74,27 +78,9 @@ pub async fn main() -> iced::Result {
     let opt = Opt::from_args();
     let ct_txt_1 = Arc::new(Mutex::new(String::new()));
     let ct_txt_2 = Arc::clone(&ct_txt_1);
-    let ct_txt_3 = Arc::clone(&ct_txt_1);
 
     let server_thread = if opt.host_file {
-        let app = Router::new()
-        .route("/status", get(|| async {
-            "UP"
-        }))
-        .route("/read", get(|| async move {
-            let content = ct_txt_1.lock().unwrap();
-            content.clone()
-        }))
-        .route("/write", get(|| async move {
-            let content = ct_txt_2.lock().unwrap();
-            content.clone()
-        }));
-
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-        println!("Server running on: http://localhost:8080");
-        Some(tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap()
-        }))
+        Some(start_server(opt.password, ct_txt_1).await)
     } else {
         None
     };
@@ -104,7 +90,7 @@ pub async fn main() -> iced::Result {
         .theme(Editor::theme)
         .exit_on_close_request(false)
         .subscription(Editor::subscription)
-        .run_with(move || Editor::new(ct_txt_3, server_thread))
+        .run_with(move || Editor::new(ct_txt_2, server_thread))
 }
 
 #[derive(Debug, Clone)]

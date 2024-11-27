@@ -18,3 +18,5 @@ tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 rfd = { version = "0.13" }
 axum = { version = "0.7.9", features = ["macros"] }
 structopt = "0.3.26"
+argon2 = { version = "0.5.3", features = ["password-hash"] }
+rand_core = { version = "0.6.4", features = ["std"] }
