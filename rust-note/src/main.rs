@@ -1,5 +1,6 @@
 use std::ffi;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use axum::routing::get;
 use axum::Router;
@@ -52,6 +53,7 @@ struct Opt {
 
 pub struct Editor {
     content: text_editor::Content,
+    content_text: Arc<Mutex<String>>,
     cursor_marker: CursorMarker,
     menubar: MenuBar,
     format_bar: FormatBar,
@@ -70,11 +72,22 @@ pub struct Editor {
 #[tokio::main]
 pub async fn main() -> iced::Result {
     let opt = Opt::from_args();
+    let ct_txt_1 = Arc::new(Mutex::new(String::new()));
+    let ct_txt_2 = Arc::clone(&ct_txt_1);
+    let ct_txt_3 = Arc::clone(&ct_txt_1);
 
     let server_thread = if opt.host_file {
         let app = Router::new()
         .route("/status", get(|| async {
             "UP"
+        }))
+        .route("/read", get(|| async move {
+            let content = ct_txt_1.lock().unwrap();
+            content.clone()
+        }))
+        .route("/write", get(|| async move {
+            let content = ct_txt_2.lock().unwrap();
+            content.clone()
         }));
 
         let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
@@ -91,7 +104,7 @@ pub async fn main() -> iced::Result {
         .theme(Editor::theme)
         .exit_on_close_request(false)
         .subscription(Editor::subscription)
-        .run_with(|| Editor::new(server_thread))
+        .run_with(move || Editor::new(ct_txt_3, server_thread))
 }
 
 #[derive(Debug, Clone)]
@@ -157,10 +170,11 @@ impl<Message> canvas::Program<Message> for CursorMarker {
 }
 
 impl Editor {
-    fn new(server_thread: Option<JoinHandle<()>>) -> (Self, Task<Message>) {
+    fn new(content_text: Arc<Mutex<String>>, server_thread: Option<JoinHandle<()>>) -> (Self, Task<Message>) {
         (
             Self {
                 content: text_editor::Content::new(),
+                content_text,
                 cursor_marker: CursorMarker::new(0.2),
                 menubar: MenuBar::new(),
                 format_bar: FormatBar::new(),
@@ -412,7 +426,11 @@ impl Editor {
                 self.cursor_marker = CursorMarker::new(line);
 
                 // Update markdown preview with the editor's text content
-                self.markdown_text = markdown::parse(&self.content.text()).collect()
+                self.markdown_text = markdown::parse(&self.content.text()).collect();
+
+                // Update the shared content text
+                let mut content_text = self.content_text.lock().unwrap();
+                *content_text = self.content.text();
             }
             Message::Menu(menu_msg) => {
                 let _ = self.menubar.update(menu_msg.clone());
