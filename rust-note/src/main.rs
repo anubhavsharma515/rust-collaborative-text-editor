@@ -2,13 +2,13 @@ use std::ffi;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use iced::{window, Pixels};
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::{
     button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
     scrollable, stack, text, text_editor, text_input, toggler, Container, Stack, Text, TextEditor,
 };
+use iced::{window, Pixels};
 
 use iced::{highlighter, Color};
 use iced::{Alignment, Element, Length, Task, Theme};
@@ -16,9 +16,9 @@ use iced::{Alignment, Element, Length, Task, Theme};
 use iced_aw::{TabLabel, Tabs};
 
 // Custom widgets
-mod widgets;
 mod handlers;
 mod server;
+mod widgets;
 
 use server::start_server;
 use structopt::StructOpt;
@@ -51,8 +51,11 @@ struct Opt {
     #[structopt(short, long)]
     host_file: bool,
 
-    #[structopt(long)]
-    password: Option<String>
+    #[structopt(short, long)]
+    read_access_password: Option<String>,
+
+    #[structopt(short, long)]
+    write_access_password: Option<String>,
 }
 
 pub struct Editor {
@@ -80,7 +83,14 @@ pub async fn main() -> iced::Result {
     let ct_txt_2 = Arc::clone(&ct_txt_1);
 
     let server_thread = if opt.host_file {
-        Some(start_server(opt.password, ct_txt_1).await)
+        Some(
+            start_server(
+                opt.read_access_password,
+                opt.write_access_password,
+                ct_txt_1,
+            )
+            .await,
+        )
     } else {
         None
     };
@@ -156,7 +166,10 @@ impl<Message> canvas::Program<Message> for CursorMarker {
 }
 
 impl Editor {
-    fn new(content_text: Arc<Mutex<String>>, server_thread: Option<JoinHandle<()>>) -> (Self, Task<Message>) {
+    fn new(
+        content_text: Arc<Mutex<String>>,
+        server_thread: Option<JoinHandle<()>>,
+    ) -> (Self, Task<Message>) {
         (
             Self {
                 content: text_editor::Content::new(),
@@ -184,13 +197,9 @@ impl Editor {
     }
 
     fn subscription(&self) -> iced::Subscription<Message> {
-        window::events().map(|(id, evt)| {
-            match evt {
-                iced::window::Event::CloseRequested => {
-                    Message::CloseWindow(id)
-                },
-                _ => Message::NoOp,
-            }
+        window::events().map(|(id, evt)| match evt {
+            iced::window::Event::CloseRequested => Message::CloseWindow(id),
+            _ => Message::NoOp,
         })
     }
 
@@ -220,7 +229,13 @@ impl Editor {
                 let words = &content.split(" ").count();
                 let lines = &content.split("\n").count();
 
-                format!("Words: {} | Lines: {} | Line {}, Columns {}", words - 1, lines - 1, line + 1, column + 1)
+                format!(
+                    "Words: {} | Lines: {} | Line {}, Columns {}",
+                    words - 1,
+                    lines - 1,
+                    line + 1,
+                    column + 1
+                )
             })
         ]
         .spacing(10);
@@ -358,7 +373,6 @@ impl Editor {
                 }
                 _ => text_editor::Binding::from_key_press(key_press),
             });
-
 
         let content = column![
             row![

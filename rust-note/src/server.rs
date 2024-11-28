@@ -1,43 +1,44 @@
 use argon2::{
-    password_hash::{
-        PasswordHasher, SaltString
-    },
-    Argon2
+    password_hash::{PasswordHasher, SaltString},
+    Argon2,
 };
 use axum::{middleware, routing::get, Router};
-use std::sync::{Arc, Mutex};
 use rand_core::OsRng;
+use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 use crate::handlers::{auth, edit_handler, read_handler};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub read_hash: Option<String>,
-    pub content_text: Arc<Mutex<String>>
+    pub read_access_hash: Option<String>,
+    pub write_access_hash: Option<String>,
+    pub content_text: Arc<Mutex<String>>,
 }
 
-pub async fn start_server(password: Option<String>, content_text: Arc<Mutex<String>>) -> JoinHandle<()> {
-    let read_hash = password.and_then(|pass| Some(generate_password_hash(pass)));
+pub async fn start_server(
+    read_access_pass: Option<String>,
+    write_access_pass: Option<String>,
+    content_text: Arc<Mutex<String>>,
+) -> JoinHandle<()> {
+    let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
+    let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
     let state = AppState {
-        read_hash,
+        read_access_hash,
+        write_access_hash,
         content_text,
     };
 
     let app = Router::new()
-    .route("/status", get(|| async {
-        "UP"
-    }))
-    .route("/read", get(read_handler))
-    .route("/edit", get(edit_handler))
-    .layer(middleware::from_fn_with_state(state.clone(), auth))
-    .with_state(state);
+        .route("/status", get(|| async { "UP" }))
+        .route("/read", get(read_handler))
+        .route("/edit", get(edit_handler))
+        .layer(middleware::from_fn_with_state(state.clone(), auth))
+        .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     println!("Server running on: http://localhost:8080");
-    tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap()
-    })
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() })
 }
 
 fn generate_password_hash(password: String) -> String {
