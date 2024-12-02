@@ -4,10 +4,10 @@ use argon2::{
 };
 use axum::{middleware, routing::get, Router};
 use rand_core::OsRng;
-use std::sync::{Arc, Mutex};
-use tokio::task::JoinHandle;
+use std::{net::SocketAddr, sync::Arc};
+use tokio::{sync::Mutex, task::JoinHandle};
 
-use crate::handlers::{auth, edit_handler, read_handler};
+use crate::handlers::{auth, ws_handler};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -31,14 +31,21 @@ pub async fn start_server(
 
     let app = Router::new()
         .route("/status", get(|| async { "UP" }))
-        .route("/read", get(read_handler))
-        .route("/edit", get(edit_handler))
+        .route("/read", get(ws_handler))
+        .route("/edit", get(ws_handler))
         .layer(middleware::from_fn_with_state(state.clone(), auth))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
     println!("Server running on: http://localhost:8080");
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() })
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    })
 }
 
 fn generate_password_hash(password: String) -> String {

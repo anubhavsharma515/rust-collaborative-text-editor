@@ -6,8 +6,9 @@ mod widgets;
 
 use editor::Editor;
 use server::start_server;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use structopt::StructOpt;
+use tokio::sync::Mutex;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "rust-note", about = "A collaborative text editor")]

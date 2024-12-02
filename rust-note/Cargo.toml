@@ -12,11 +12,27 @@ readme = "README.md"
 homepage = "https://github.com/anubhavsharma515/rust-collaborative-text-editor"
 
 [dependencies]
-iced = { version = "0.13", features=["canvas", "tokio", "highlighter", "markdown"] }
-iced_aw = { version = "0.11.0", default-features = false, features=["menu", "tab_bar", "tabs"] }
+iced = { version = "0.13", features = [
+    "canvas",
+    "tokio",
+    "highlighter",
+    "markdown",
+] }
+iced_aw = { version = "0.11.0", default-features = false, features = [
+    "menu",
+    "tab_bar",
+    "tabs",
+] }
+futures = "0.3"
+futures-util = { version = "0.3", default-features = false, features = [
+    "sink",
+    "std",
+] }
+headers = "0.4"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread"] }
 rfd = { version = "0.13" }
-axum = { version = "0.7.9", features = ["macros"] }
+axum = { version = "0.7.9", features = ["macros", "ws"] }
+axum-extra = { version = "0.9.6", features = ["typed-header"] }
 structopt = "0.3.26"
 argon2 = { version = "0.5.3", features = ["password-hash"] }
 rand_core = { version = "0.6.4", features = ["std"] }

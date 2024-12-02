@@ -10,7 +10,8 @@ use iced::{Alignment, Element, Length, Task, Theme};
 use iced_aw::{TabLabel, Tabs};
 use std::ffi;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
 use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage};
@@ -381,8 +382,13 @@ impl Editor {
                 self.markdown_text = markdown::parse(&self.content.text()).collect();
 
                 // Update the shared content text
-                let mut content_text = self.content_text.lock().unwrap();
-                *content_text = self.content.text();
+                let text = self.content.text();
+                let content_lock = self.content_text.clone();
+                return Task::future(async move {
+                    let mut content_txt = content_lock.lock().await;
+                    *content_txt = text;
+                    Message::NoOp
+                });
             }
             Message::Menu(menu_msg) => {
                 let _ = self.menubar.update(menu_msg.clone());
