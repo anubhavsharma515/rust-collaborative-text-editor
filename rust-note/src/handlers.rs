@@ -6,7 +6,7 @@ use axum::{
         ws::{CloseFrame, Message, WebSocket},
         ConnectInfo, Request, State, WebSocketUpgrade,
     },
-    http::{self, response::Parts, StatusCode},
+    http::{self, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -119,7 +119,7 @@ async fn handle_edit_socket(mut socket: WebSocket, who: SocketAddr, State(state)
 
     if let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {
-            if process_message(msg, who).is_break() {
+            if process_message(msg, who, &state).await.is_break() {
                 return;
             }
         } else {
@@ -139,7 +139,7 @@ async fn handle_edit_socket(mut socket: WebSocket, who: SocketAddr, State(state)
         while let Some(Ok(msg)) = receiver.next().await {
             cnt += 1;
 
-            if process_message(msg, who).is_break() {
+            if process_message(msg, who, &state).await.is_break() {
                 break;
             }
         }
@@ -153,14 +153,12 @@ async fn handle_edit_socket(mut socket: WebSocket, who: SocketAddr, State(state)
                 Ok(a) => println!("{a} messages sent to {who}"),
                 Err(a) => println!("Error sending messages {a:?}")
             }
-            recv_task.abort();
         },
         rv_b = (&mut recv_task) => {
             match rv_b {
                 Ok(b) => println!("Received {b} messages"),
                 Err(b) => println!("Error receiving messages {b:?}")
             }
-            send_task.abort();
         }
     }
 
@@ -199,10 +197,18 @@ async fn broadcast(mut sender: SplitSink<WebSocket, Message>, state: AppState) -
     n_msg
 }
 
-fn process_message(msg: Message, who: SocketAddr) -> ControlFlow<(), ()> {
+async fn process_message(msg: Message, who: SocketAddr, state: &AppState) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
             println!(">>> {who} sent str: {t:?}");
+            let mut parts = t.split(":");
+            match parts.next() {
+                Some("Edit") => {
+                    *state.content_text.lock().await = parts.collect();
+                }
+                Some("Cursor") => {}
+                _ => {}
+            }
         }
         Message::Binary(d) => {
             println!(">>> {} sent {} bytes: {:?}", who, d.len(), d);

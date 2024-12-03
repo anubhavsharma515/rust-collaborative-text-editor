@@ -1,25 +1,31 @@
+use crate::{
+    editor::CursorMarker,
+    handlers::{auth, ws_handler},
+};
 use argon2::{
     password_hash::{PasswordHasher, SaltString},
     Argon2,
 };
 use axum::{middleware, routing::get, Router};
 use rand_core::OsRng;
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
-
-use crate::handlers::{auth, ws_handler};
 
 #[derive(Clone)]
 pub struct AppState {
     pub read_access_hash: Option<String>,
     pub write_access_hash: Option<String>,
     pub content_text: Arc<Mutex<String>>,
+    pub users: Arc<Mutex<Vec<SocketAddr>>>,
+    pub user_to_cursor_map: Arc<Mutex<HashMap<SocketAddr, CursorMarker>>>,
 }
 
 pub async fn start_server(
     read_access_pass: Option<String>,
     write_access_pass: Option<String>,
     content_text: Arc<Mutex<String>>,
+    users: Arc<Mutex<Vec<SocketAddr>>>,
+    user_to_cursor_map: Arc<Mutex<HashMap<SocketAddr, CursorMarker>>>,
 ) -> JoinHandle<()> {
     let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
     let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
@@ -27,6 +33,8 @@ pub async fn start_server(
         read_access_hash,
         write_access_hash,
         content_text,
+        users,
+        user_to_cursor_map,
     };
 
     let app = Router::new()

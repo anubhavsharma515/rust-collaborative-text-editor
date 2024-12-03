@@ -1,5 +1,8 @@
+use crate::server::start_server;
+use crate::widgets;
 use iced::keyboard;
 use iced::mouse;
+use iced::widget::canvas::{self, Canvas, Frame, Path as icedPath};
 use iced::widget::{
     button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
     scrollable, stack, text, text_editor, text_input, toggler, Container, Stack, Text, TextEditor,
@@ -7,8 +10,11 @@ use iced::widget::{
 use iced::{highlighter, Color};
 use iced::{window, Pixels};
 use iced::{Alignment, Element, Length, Task, Theme};
+use iced::{Point, Rectangle, Renderer, Size};
 use iced_aw::{TabLabel, Tabs};
+use std::collections::HashMap;
 use std::ffi;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -52,6 +58,8 @@ pub struct Editor {
     session_modal_open: bool,
     active_tab: TabId,
     server_thread: Option<JoinHandle<()>>,
+    users: Arc<Mutex<Vec<SocketAddr>>>,
+    user_to_cursor_map: Arc<Mutex<HashMap<SocketAddr, CursorMarker>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -74,25 +82,24 @@ pub enum Message {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
-enum TabId {
+pub enum TabId {
     #[default]
     StartSession,
     JoinSession,
 }
 
-use iced::widget::canvas::{self, Canvas, Frame, Path as icedPath};
-use iced::{Point, Rectangle, Renderer, Size};
-
-use crate::widgets;
-
 #[derive(Clone, Copy)]
 pub struct CursorMarker {
+    colour: Color,
     pub y: f32,
 }
 
 impl CursorMarker {
     pub fn new(y: f32) -> Self {
-        Self { y }
+        Self {
+            y,
+            colour: Color::from_rgb(0.0, 0.8, 0.2),
+        }
     }
 }
 
@@ -113,20 +120,17 @@ impl<Message> canvas::Program<Message> for CursorMarker {
         // let offset_y = 2.0; // Offset for padding/margin adjustments
 
         let rectangle = icedPath::rectangle(Point::new(0.0, self.y), Size::new(5.5, 21.0));
-        frame.fill(&rectangle, Color::from_rgb(0.0, 0.8, 0.2));
+        frame.fill(&rectangle, self.colour);
         vec![frame.into_geometry()]
     }
 }
 
 impl Editor {
-    pub fn new(
-        content_text: Arc<Mutex<String>>,
-        server_thread: Option<JoinHandle<()>>,
-    ) -> (Self, Task<Message>) {
+    pub fn new() -> (Self, Task<Message>) {
         (
             Self {
                 content: text_editor::Content::new(),
-                content_text,
+                content_text: Arc::new(Mutex::new(String::new())),
                 cursor_marker: CursorMarker::new(0.2),
                 menubar: MenuBar::new(),
                 format_bar: FormatBar::new(),
@@ -139,7 +143,9 @@ impl Editor {
                 shortcut_palette_open: false,
                 session_modal_open: false,
                 active_tab: TabId::StartSession,
-                server_thread,
+                server_thread: None,
+                users: Arc::new(Mutex::new(Vec::new())),
+                user_to_cursor_map: Arc::new(Mutex::new(HashMap::new())),
             },
             Task::none(),
         )
@@ -470,7 +476,16 @@ impl Editor {
             Message::LoginServerChanged(server) => {
                 self.modal_content.server_input = server;
             }
-            Message::LoginButtonPressed => {}
+            Message::LoginButtonPressed => {
+                let content_text = self.content_text.clone();
+                let users = self.users.clone();
+                let user_to_cursor_map = self.user_to_cursor_map.clone();
+                return Task::future(async move {
+                    start_server(None, None, content_text, users, user_to_cursor_map).await;
+                    // TODO: Figure out a way to pass the handle to self.server_thread
+                    Message::NoOp
+                });
+            }
             Message::SessionModalToggle => {
                 self.session_modal_open = !self.session_modal_open;
                 self.modal_content.name_input.clear();
