@@ -8,24 +8,40 @@ use argon2::{
 };
 use axum::{middleware, routing::get, Router};
 use rand_core::OsRng;
+use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
+
+#[derive(Serialize, Deserialize)]
+pub struct UserCursorPositions {
+    user_to_cursor_map: HashMap<SocketAddr, CursorMarker>,
+}
+
+impl UserCursorPositions {
+    pub fn new() -> Self {
+        Self {
+            user_to_cursor_map: HashMap::new(),
+        }
+    }
+
+    pub fn add_user(&mut self, user: SocketAddr, cursor: CursorMarker) {
+        self.user_to_cursor_map.insert(user, cursor);
+    }
+}
 
 #[derive(Clone)]
 pub struct AppState {
     pub read_access_hash: Option<String>,
     pub write_access_hash: Option<String>,
     pub content_text: Arc<Mutex<String>>,
-    pub users: Arc<Mutex<Vec<SocketAddr>>>,
-    pub user_to_cursor_map: Arc<Mutex<HashMap<SocketAddr, CursorMarker>>>,
+    pub users: Arc<Mutex<UserCursorPositions>>,
 }
 
 pub async fn start_server(
     read_access_pass: Option<String>,
     write_access_pass: Option<String>,
     content_text: Arc<Mutex<String>>,
-    users: Arc<Mutex<Vec<SocketAddr>>>,
-    user_to_cursor_map: Arc<Mutex<HashMap<SocketAddr, CursorMarker>>>,
+    users: Arc<Mutex<UserCursorPositions>>,
 ) -> JoinHandle<()> {
     let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
     let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
@@ -34,7 +50,6 @@ pub async fn start_server(
         write_access_hash,
         content_text,
         users,
-        user_to_cursor_map,
     };
 
     let app = Router::new()

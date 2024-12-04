@@ -1,4 +1,5 @@
 use crate::server::start_server;
+use crate::server::UserCursorPositions;
 use crate::widgets;
 use iced::keyboard;
 use iced::mouse;
@@ -7,14 +8,15 @@ use iced::widget::{
     button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
     scrollable, stack, text, text_editor, text_input, toggler, Container, Stack, Text, TextEditor,
 };
+use iced::Subscription;
 use iced::{highlighter, Color};
 use iced::{window, Pixels};
 use iced::{Alignment, Element, Length, Task, Theme};
 use iced::{Point, Rectangle, Renderer, Size};
 use iced_aw::{TabLabel, Tabs};
-use std::collections::HashMap;
+use serde::Deserialize;
+use serde::Serialize;
 use std::ffi;
-use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -58,8 +60,7 @@ pub struct Editor {
     session_modal_open: bool,
     active_tab: TabId,
     server_thread: Option<JoinHandle<()>>,
-    users: Arc<Mutex<Vec<SocketAddr>>>,
-    user_to_cursor_map: Arc<Mutex<HashMap<SocketAddr, CursorMarker>>>,
+    users: Arc<Mutex<UserCursorPositions>>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,18 +89,14 @@ pub enum TabId {
     JoinSession,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Serialize, Deserialize)]
 pub struct CursorMarker {
-    colour: Color,
     pub y: f32,
 }
 
 impl CursorMarker {
     pub fn new(y: f32) -> Self {
-        Self {
-            y,
-            colour: Color::from_rgb(0.0, 0.8, 0.2),
-        }
+        Self { y }
     }
 }
 
@@ -120,7 +117,7 @@ impl<Message> canvas::Program<Message> for CursorMarker {
         // let offset_y = 2.0; // Offset for padding/margin adjustments
 
         let rectangle = icedPath::rectangle(Point::new(0.0, self.y), Size::new(5.5, 21.0));
-        frame.fill(&rectangle, self.colour);
+        frame.fill(&rectangle, Color::from_rgb(0.0, 0.8, 0.2));
         vec![frame.into_geometry()]
     }
 }
@@ -144,8 +141,7 @@ impl Editor {
                 session_modal_open: false,
                 active_tab: TabId::StartSession,
                 server_thread: None,
-                users: Arc::new(Mutex::new(Vec::new())),
-                user_to_cursor_map: Arc::new(Mutex::new(HashMap::new())),
+                users: Arc::new(Mutex::new(UserCursorPositions::new())),
             },
             Task::none(),
         )
@@ -155,11 +151,13 @@ impl Editor {
         String::from("rust-note")
     }
 
-    pub fn subscription(&self) -> iced::Subscription<Message> {
-        window::events().map(|(id, evt)| match evt {
+    pub fn subscription(&self) -> Subscription<Message> {
+        let subscriptions = vec![window::events().map(|(id, evt)| match evt {
             iced::window::Event::CloseRequested => Message::CloseWindow(id),
             _ => Message::NoOp,
-        })
+        })];
+
+        Subscription::batch(subscriptions)
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -478,10 +476,9 @@ impl Editor {
             }
             Message::LoginButtonPressed => {
                 let content_text = self.content_text.clone();
-                let users = self.users.clone();
-                let user_to_cursor_map = self.user_to_cursor_map.clone();
+                let user_to_cursor_map = self.users.clone();
                 return Task::future(async move {
-                    start_server(None, None, content_text, users, user_to_cursor_map).await;
+                    start_server(None, None, content_text, user_to_cursor_map).await;
                     // TODO: Figure out a way to pass the handle to self.server_thread
                     Message::NoOp
                 });

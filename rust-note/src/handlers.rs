@@ -109,7 +109,11 @@ async fn handle_read_socket(socket: WebSocket, who: SocketAddr, State(state): St
     println!("Websocket context {who} destroyed");
 }
 
-async fn handle_edit_socket(mut socket: WebSocket, who: SocketAddr, State(state): State<AppState>) {
+async fn handle_edit_socket(
+    mut socket: WebSocket,
+    who: SocketAddr,
+    State(mut state): State<AppState>,
+) {
     if socket.send(Message::Ping(vec![1, 2, 3])).await.is_ok() {
         println!("Pinged {who}...");
     } else {
@@ -119,7 +123,7 @@ async fn handle_edit_socket(mut socket: WebSocket, who: SocketAddr, State(state)
 
     if let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {
-            if process_message(msg, who, &state).await.is_break() {
+            if process_message(msg, who, &mut state).await.is_break() {
                 return;
             }
         } else {
@@ -139,7 +143,7 @@ async fn handle_edit_socket(mut socket: WebSocket, who: SocketAddr, State(state)
         while let Some(Ok(msg)) = receiver.next().await {
             cnt += 1;
 
-            if process_message(msg, who, &state).await.is_break() {
+            if process_message(msg, who, &mut state).await.is_break() {
                 break;
             }
         }
@@ -181,6 +185,17 @@ async fn broadcast(mut sender: SplitSink<WebSocket, Message>, state: AppState) -
         }
         n_msg += 1;
 
+        let users = state.users.lock().await;
+        let users_json = serde_json::to_string(&*users).unwrap();
+        if sender
+            .send(Message::Text(format!("Users: {}", users_json)))
+            .await
+            .is_err()
+        {
+            break;
+        }
+        n_msg += 1;
+
         tokio::time::sleep(std::time::Duration::from_millis(BROADCAST_INTERVAL)).await;
     }
 
@@ -197,16 +212,27 @@ async fn broadcast(mut sender: SplitSink<WebSocket, Message>, state: AppState) -
     n_msg
 }
 
-async fn process_message(msg: Message, who: SocketAddr, state: &AppState) -> ControlFlow<(), ()> {
+async fn process_message(
+    msg: Message,
+    who: SocketAddr,
+    state: &mut AppState,
+) -> ControlFlow<(), ()> {
     match msg {
         Message::Text(t) => {
             println!(">>> {who} sent str: {t:?}");
-            let mut parts = t.split(":");
-            match parts.next() {
+            let parts: Vec<&str> = t.split(":").collect();
+            let mut iter = parts.into_iter();
+            match iter.next() {
                 Some("Edit") => {
-                    *state.content_text.lock().await = parts.collect();
+                    *state.content_text.lock().await = iter.collect::<Vec<&str>>().join(":");
                 }
-                Some("Cursor") => {}
+                Some("Cursor") => {
+                    let s = iter.collect::<Vec<&str>>().join(":");
+                    match serde_json::from_str(s.trim()) {
+                        Ok(cursor) => state.users.lock().await.add_user(who, cursor),
+                        Err(e) => println!("Error parsing cursor: {e}"),
+                    }
+                }
                 _ => {}
             }
         }
