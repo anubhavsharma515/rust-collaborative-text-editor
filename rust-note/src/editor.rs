@@ -59,8 +59,10 @@ pub struct Editor {
     shortcut_palette_open: bool,
     session_modal_open: bool,
     active_tab: TabId,
-    server_thread: Option<JoinHandle<()>>,
+    server_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     users: Arc<Mutex<UserCursorPositions>>,
+    read_password: Option<String>,
+    edit_password: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +81,7 @@ pub enum Message {
     LoginServerChanged(String),
     LoginButtonPressed,
     TabSelected(TabId),
+    RequestClose(iced::window::Id),
     CloseWindow(iced::window::Id),
 }
 
@@ -140,8 +143,10 @@ impl Editor {
                 shortcut_palette_open: false,
                 session_modal_open: false,
                 active_tab: TabId::StartSession,
-                server_thread: None,
+                server_thread: Arc::new(Mutex::new(None)),
                 users: Arc::new(Mutex::new(UserCursorPositions::new())),
+                read_password: None,
+                edit_password: None,
             },
             Task::none(),
         )
@@ -476,9 +481,17 @@ impl Editor {
             }
             Message::LoginButtonPressed => {
                 let content_text = self.content_text.clone();
+                let read_password = self.read_password.clone();
+                let edit_password = self.edit_password.clone();
                 let user_to_cursor_map = self.users.clone();
                 return Task::future(async move {
-                    start_server(None, None, content_text, user_to_cursor_map).await;
+                    start_server(
+                        read_password,
+                        edit_password,
+                        content_text,
+                        user_to_cursor_map,
+                    )
+                    .await;
                     // TODO: Figure out a way to pass the handle to self.server_thread
                     Message::NoOp
                 });
@@ -494,14 +507,20 @@ impl Editor {
                     self.modal_content.server_input.clear();
                 }
             }
+            Message::RequestClose(id) => {
+                println!("Closing server...");
+                let server_thread_lock = self.server_thread.clone();
+                return Task::future(async move {
+                    let server_thread_mutex = server_thread_lock.lock().await;
+                    if let Some(server_thread) = &*server_thread_mutex {
+                        server_thread.abort();
+                    }
+                    Message::CloseWindow(id)
+                });
+            }
             Message::CloseWindow(id) => {
                 println!("Window with id {:?} closed", id);
-                println!("Closing server...");
-                if let Some(server_thread) = &self.server_thread {
-                    server_thread.abort();
-                }
-
-                return window::close(id);
+                window::close::<iced::window::Id>(id);
             }
         }
         Task::none()
