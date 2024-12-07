@@ -87,10 +87,6 @@ impl SessionModal {
             true
         }
     }
-
-    pub fn validate_all(&mut self) -> bool {
-        self.validate_name() & self.validate_file()
-    }
 }
 
 pub struct Editor {
@@ -735,12 +731,6 @@ impl Editor {
                 self.modal_content.name_input = name;
                 self.modal_content.validate_name();
             }
-            Message::WritePasswordChanged(password) => {
-                self.modal_content.write_password_input = password;
-            }
-            Message::ReadPasswordChanged(password) => {
-                self.modal_content.read_password_input = password;
-            }
             Message::FilePathChanged(file_path) => {
                 self.modal_content.file_path_input = file_path;
                 self.modal_content.validate_file();
@@ -870,21 +860,4 @@ where
         )
     ]
     .into()
-}
-
-fn is_valid_markdown_file(path: &str) -> bool {
-    Path::new(path)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("md"))
-        .unwrap_or(false)
-}
-
-fn is_valid_url(url: &str) -> bool {
-    Url::parse(url).is_ok()
-}
-
-fn is_server_available(server: &str) -> bool {
-    // Replace with your logic to check server availability
-    true
 }
