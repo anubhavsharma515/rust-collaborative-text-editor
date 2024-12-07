@@ -1,3 +1,4 @@
+use crate::client;
 use crate::server::start_server;
 use crate::server::Document;
 use crate::server::Users;
@@ -22,9 +23,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use url::Url;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
-use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage};
-use url::{Url}; // For form parameters
+use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage}; // For form parameters
 
 const BOLD_HOTKEY: &str = "b";
 const ITALIC_HOTKEY: &str = "i";
@@ -35,19 +36,22 @@ const SESSION_MODAL_HOTKEY: &str = "n";
 #[derive(Clone)]
 pub struct SessionModal {
     pub name_input: String,
-    pub server_input: String,
+    pub session_password_input: String,
+    pub write_password_input: String,
+    pub read_password_input: String,
     pub file_path_input: String,
     pub name_error: String,
     pub server_error: String,
     pub file_error: String,
 }
 
-
 impl Default for SessionModal {
-    fn default() -> Self { 
+    fn default() -> Self {
         Self {
             name_input: String::new(),
-            server_input: String::new(),
+            session_password_input: String::new(),
+            write_password_input: String::new(),
+            read_password_input: String::new(),
             file_path_input: String::new(),
             name_error: String::new(),
             server_error: String::new(),
@@ -67,19 +71,11 @@ impl SessionModal {
         }
     }
 
-    pub fn validate_server(&mut self) -> bool {
-        if self.server_input.is_empty() || self.server_input.starts_with("http") {
-            self.server_error = "".to_string();
-            true
-        } else {
-            self.server_error = "Invalid server URL.".to_string();
-            false
-        }
-    }
-
     pub fn validate_file(&mut self) -> bool {
         if !&self.file_path_input.is_empty() {
-            if self.file_path_input.ends_with(".md") && std::path::Path::new(&self.file_path_input).exists() {
+            if self.file_path_input.ends_with(".md")
+                && std::path::Path::new(&self.file_path_input).exists()
+            {
                 self.file_error = "".to_string();
                 true
             } else {
@@ -93,7 +89,7 @@ impl SessionModal {
     }
 
     pub fn validate_all(&mut self) -> bool {
-        self.validate_name() & self.validate_server() & self.validate_file()
+        self.validate_name() & self.validate_file()
     }
 }
 
@@ -116,6 +112,13 @@ pub struct Editor {
     users: Arc<Mutex<Users>>,
     read_password: Option<String>,
     edit_password: Option<String>,
+    joined_session: bool,
+    client_state: State,
+}
+
+enum State {
+    Disconnected,
+    Connected(client::Connection),
 }
 
 #[derive(Debug, Clone)]
@@ -131,10 +134,14 @@ pub enum Message {
     ShortcutPaletteToggle,
     SessionModalToggle,
     LoginNameChanged(String),
-    LoginServerChanged(String),
+    SessionPasswordChanged(String),
+    WritePasswordChanged(String),
+    ReadPasswordChanged(String),
     FilePathChanged(String),
-    LoginButtonPressed,
+    StartSessionPressed,
+    JoinSessionPressed,
     TabSelected(TabId),
+    Echo(client::Event),
     RequestClose(iced::window::Id),
     CloseWindow(iced::window::Id),
 }
@@ -199,8 +206,10 @@ impl Editor {
                 active_tab: TabId::StartSession,
                 server_thread: Arc::new(Mutex::new(None)),
                 users: Arc::new(Mutex::new(Users::new())),
+                joined_session: false,
                 read_password: None,
                 edit_password: None,
+                client_state: State::Disconnected,
             },
             Task::none(),
         )
@@ -211,10 +220,17 @@ impl Editor {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        let subscriptions = vec![window::events().map(|(id, evt)| match evt {
-            iced::window::Event::CloseRequested => Message::CloseWindow(id),
-            _ => Message::NoOp,
-        })];
+        let subscriptions = vec![
+            window::events().map(|(id, evt)| match evt {
+                iced::window::Event::CloseRequested => Message::CloseWindow(id),
+                _ => Message::NoOp,
+            }),
+            if self.joined_session {
+                Subscription::run(client::connect).map(Message::Echo)
+            } else {
+                Subscription::none()
+            },
+        ];
 
         Subscription::batch(subscriptions)
     }
@@ -280,7 +296,6 @@ impl Editor {
         .padding(10)
         .style(container::rounded_box);
 
-
         let session_modal: Container<Message> = container(
             column![
                 text("Colab").size(24),
@@ -299,38 +314,42 @@ impl Editor {
                             } else {
                                 text("").size(14)
                             },
-                            text_input("Enter file path (optional)", &self.modal_content.file_path_input.clone())
-                                .on_input(Message::FilePathChanged)
-                                .padding(5),
-                            if !self.modal_content.clone().validate_file()
-                            {
+                            text_input(
+                                "Enter file path (optional)",
+                                &self.modal_content.file_path_input.clone()
+                            )
+                            .on_input(Message::FilePathChanged)
+                            .padding(5),
+                            if !self.modal_content.clone().validate_file() {
                                 text("Invalid Markdown file path")
                                     .size(14)
                                     .color([1.0, 0.0, 0.0])
                             } else {
                                 text("").size(14)
                             },
-                            text_input("Enter server address (optional)", &self.modal_content.server_input)
-                                .on_input(Message::LoginServerChanged)
+                            row![
+                                text_input(
+                                    "Enter read session password",
+                                    &self.modal_content.read_password_input
+                                )
+                                .on_input(Message::ReadPasswordChanged)
                                 .padding(5),
-                            if !&self.modal_content.server_input.is_empty()
-                                && !is_valid_url(&self.modal_content.server_input)
-                            {
-                                text("Invalid URL")
-                                    .size(14)
-                                    .color([1.0, 0.0, 0.0])
-                            } else {
-                                text("").size(14)
-                            },
+                                text_input(
+                                    "Enter write session password",
+                                    &self.modal_content.write_password_input
+                                )
+                                .on_input(Message::WritePasswordChanged)
+                                .padding(5),
+                            ],
                             {
                                 let mut button = button("Start Session").style(button::secondary);
                                 if self.modal_content.name_input.len() >= 5
                                     && ((!self.modal_content.file_path_input.clone().is_empty()
                                         && self.modal_content.clone().validate_file())
-                                    || (self.modal_content.file_path_input.clone().is_empty()))
+                                        || (self.modal_content.file_path_input.clone().is_empty()))
                                 {
                                     button = button
-                                        .on_press(Message::NoOp)
+                                        .on_press(Message::StartSessionPressed)
                                         .style(button::primary);
                                 }
                                 button
@@ -353,27 +372,17 @@ impl Editor {
                             } else {
                                 text("").size(14)
                             },
-                            text_input("Enter server address", &self.modal_content.server_input)
-                                .on_input(Message::LoginServerChanged)
-                                .padding(5),
-                            if self.modal_content.server_input.is_empty()
-                                || !is_server_available(&self.modal_content.server_input)
-                            {
-                                text("Invalid or non-existent server address")
-                                    .size(14)
-                                    .color([1.0, 0.0, 0.0])
-                            } else {
-                                text("").size(14)
-                            },
-
+                            text_input(
+                                "Enter session password",
+                                &self.modal_content.session_password_input
+                            )
+                            .on_input(Message::SessionPasswordChanged)
+                            .padding(5),
                             {
                                 let mut button = button("Join Session").style(button::secondary);
-                                if self.modal_content.name_input.len() >= 5
-                                    && !self.modal_content.server_input.is_empty()
-                                    && is_server_available(&self.modal_content.server_input)
-                                {
+                                if self.modal_content.name_input.len() >= 5 {
                                     button = button
-                                        .on_press(Message::NoOp)
+                                        .on_press(Message::JoinSessionPressed)
                                         .style(button::primary);
                                 }
                                 button
@@ -680,7 +689,7 @@ impl Editor {
             Message::ShowMarkdownPreview(toggled) => {
                 self.markdown_preview_open = toggled;
             }
-            Message::LoginButtonPressed => {
+            Message::StartSessionPressed => {
                 let doc = self.document.clone();
                 let read_password = self.read_password.clone();
                 let edit_password = self.edit_password.clone();
@@ -694,24 +703,43 @@ impl Editor {
                     Message::NoOp
                 });
             }
+            Message::Echo(event) => match event {
+                client::Event::Connected(connection) => {
+                    self.client_state = State::Connected(connection);
+                }
+                client::Event::Disconnected => {
+                    self.client_state = State::Disconnected;
+                }
+                _ => {}
+            },
+            Message::ReadPasswordChanged(password) => {
+                self.modal_content.read_password_input = password;
+            }
+            Message::WritePasswordChanged(password) => {
+                self.modal_content.write_password_input = password;
+            }
+            Message::SessionPasswordChanged(password) => {
+                self.modal_content.session_password_input = password;
+            }
+            Message::JoinSessionPressed => {
+                self.joined_session = true;
+            }
             Message::SessionModalToggle => {
                 self.session_modal_open = !self.session_modal_open;
                 self.modal_content.name_input.clear();
-                self.modal_content.server_input.clear();
             }
             Message::TabSelected(selected) => {
                 self.active_tab = selected;
-                if !(self.modal_content.server_input.is_empty()) {
-                    self.modal_content.server_input.clear();
-                }
             }
             Message::LoginNameChanged(name) => {
                 self.modal_content.name_input = name;
                 self.modal_content.validate_name();
             }
-            Message::LoginServerChanged(server) => {
-                self.modal_content.server_input = server;
-                self.modal_content.validate_server();
+            Message::WritePasswordChanged(password) => {
+                self.modal_content.write_password_input = password;
+            }
+            Message::ReadPasswordChanged(password) => {
+                self.modal_content.read_password_input = password;
             }
             Message::FilePathChanged(file_path) => {
                 self.modal_content.file_path_input = file_path;
@@ -843,7 +871,6 @@ where
     ]
     .into()
 }
-
 
 fn is_valid_markdown_file(path: &str) -> bool {
     Path::new(path)

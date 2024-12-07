@@ -1,4 +1,5 @@
 // Custom widgets
+mod client;
 mod editor;
 mod handlers;
 mod server;
