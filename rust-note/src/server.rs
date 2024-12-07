@@ -68,6 +68,7 @@ pub struct DeleteRequest {
     pub replica: EncodedReplica,
 }
 
+// Leveraged from https://docs.rs/cola-crdt/latest/cola/
 impl Document {
     pub fn new(buffer: String, replica_id: ReplicaId) -> Self {
         let crdt = Replica::new(replica_id, buffer.len());

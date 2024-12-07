@@ -24,6 +24,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
 use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage};
+use url::{Url}; // For form parameters
 
 const BOLD_HOTKEY: &str = "b";
 const ITALIC_HOTKEY: &str = "i";
@@ -31,17 +32,68 @@ const STRIKETHROUGH_HOTKEY: &str = "f";
 const SHORTCUT_PALETTE_HOTKEY: &str = "p";
 const SESSION_MODAL_HOTKEY: &str = "n";
 
+#[derive(Clone)]
 pub struct SessionModal {
     pub name_input: String,
     pub server_input: String,
+    pub file_path_input: String,
+    pub name_error: String,
+    pub server_error: String,
+    pub file_error: String,
 }
 
+
 impl Default for SessionModal {
-    fn default() -> Self {
+    fn default() -> Self { 
         Self {
             name_input: String::new(),
             server_input: String::new(),
+            file_path_input: String::new(),
+            name_error: String::new(),
+            server_error: String::new(),
+            file_error: String::new(),
         }
+    }
+}
+
+impl SessionModal {
+    pub fn validate_name(&mut self) -> bool {
+        if self.name_input.len() >= 5 {
+            self.name_error = "".to_string();
+            true
+        } else {
+            self.name_error = "Name must be at least 5 characters long.".to_string();
+            false
+        }
+    }
+
+    pub fn validate_server(&mut self) -> bool {
+        if self.server_input.is_empty() || self.server_input.starts_with("http") {
+            self.server_error = "".to_string();
+            true
+        } else {
+            self.server_error = "Invalid server URL.".to_string();
+            false
+        }
+    }
+
+    pub fn validate_file(&mut self) -> bool {
+        if !&self.file_path_input.is_empty() {
+            if self.file_path_input.ends_with(".md") && std::path::Path::new(&self.file_path_input).exists() {
+                self.file_error = "".to_string();
+                true
+            } else {
+                self.file_error = "Invalid Markdown file path.".to_string();
+                false
+            }
+        } else {
+            self.file_error = "".to_string(); // File is optional
+            true
+        }
+    }
+
+    pub fn validate_all(&mut self) -> bool {
+        self.validate_name() & self.validate_server() & self.validate_file()
     }
 }
 
@@ -80,6 +132,7 @@ pub enum Message {
     SessionModalToggle,
     LoginNameChanged(String),
     LoginServerChanged(String),
+    FilePathChanged(String),
     LoginButtonPressed,
     TabSelected(TabId),
     RequestClose(iced::window::Id),
@@ -227,6 +280,7 @@ impl Editor {
         .padding(10)
         .style(container::rounded_box);
 
+
         let session_modal: Container<Message> = container(
             column![
                 text("Colab").size(24),
@@ -238,17 +292,47 @@ impl Editor {
                             text_input("Enter your name", &self.modal_content.name_input)
                                 .on_input(Message::LoginNameChanged)
                                 .padding(5),
-                            text_input("Enter server address", &self.modal_content.server_input)
+                            if self.modal_content.name_input.len() < 5 {
+                                text("Name must be at least 5 characters long")
+                                    .size(14)
+                                    .color([1.0, 0.0, 0.0])
+                            } else {
+                                text("").size(14)
+                            },
+                            text_input("Enter file path (optional)", &self.modal_content.file_path_input.clone())
+                                .on_input(Message::FilePathChanged)
+                                .padding(5),
+                            if !self.modal_content.clone().validate_file()
+                            {
+                                text("Invalid Markdown file path")
+                                    .size(14)
+                                    .color([1.0, 0.0, 0.0])
+                            } else {
+                                text("").size(14)
+                            },
+                            text_input("Enter server address (optional)", &self.modal_content.server_input)
                                 .on_input(Message::LoginServerChanged)
                                 .padding(5),
+                            if !&self.modal_content.server_input.is_empty()
+                                && !is_valid_url(&self.modal_content.server_input)
+                            {
+                                text("Invalid URL")
+                                    .size(14)
+                                    .color([1.0, 0.0, 0.0])
+                            } else {
+                                text("").size(14)
+                            },
                             {
                                 let mut button = button("Start Session").style(button::secondary);
-                                if !(self.modal_content.name_input.is_empty()
-                                    | self.modal_content.server_input.is_empty())
+                                if self.modal_content.name_input.len() >= 5
+                                    && (self.modal_content.file_path_input.clone().is_empty()
+                                        || is_valid_markdown_file(&self.modal_content.file_path_input.clone()))
+                                    // && (self.modal_content.server_input.clone().is_empty()
+                                    //     || is_valid_url(&self.modal_content.server_input))
                                 {
                                     button = button
-                                        .on_press(Message::LoginButtonPressed)
-                                        .style(button::primary)
+                                        .on_press(Message::NoOp)
+                                        .style(button::primary);
                                 }
                                 button
                             }
@@ -260,15 +344,38 @@ impl Editor {
                         TabId::JoinSession,
                         TabLabel::Text(String::from("Join Session")),
                         column![
+                            text_input("Enter your name", &self.modal_content.name_input)
+                                .on_input(Message::LoginNameChanged)
+                                .padding(5),
+                            if self.modal_content.name_input.len() < 5 {
+                                text("Name must be at least 5 characters long")
+                                    .size(14)
+                                    .color([1.0, 0.0, 0.0])
+                            } else {
+                                text("").size(14)
+                            },
                             text_input("Enter server address", &self.modal_content.server_input)
                                 .on_input(Message::LoginServerChanged)
                                 .padding(5),
+                            if self.modal_content.server_input.is_empty()
+                                || !is_server_available(&self.modal_content.server_input)
                             {
-                                let mut button = button("Start Session").style(button::secondary);
-                                if !(self.modal_content.server_input.is_empty()) {
+                                text("Invalid or non-existent server address")
+                                    .size(14)
+                                    .color([1.0, 0.0, 0.0])
+                            } else {
+                                text("").size(14)
+                            },
+
+                            {
+                                let mut button = button("Join Session").style(button::secondary);
+                                if self.modal_content.name_input.len() >= 5
+                                    && !self.modal_content.server_input.is_empty()
+                                    && is_server_available(&self.modal_content.server_input)
+                                {
                                     button = button
-                                        .on_press(Message::LoginButtonPressed)
-                                        .style(button::primary)
+                                        .on_press(Message::NoOp)
+                                        .style(button::primary);
                                 }
                                 button
                             }
@@ -282,8 +389,8 @@ impl Editor {
             .padding(10)
             .spacing(20),
         )
-        .height(Length::Fixed(300.0))
-        .width(300)
+        .height(Length::Shrink)
+        .width(Length::Shrink)
         .padding(10)
         .style(container::rounded_box);
 
@@ -574,12 +681,6 @@ impl Editor {
             Message::ShowMarkdownPreview(toggled) => {
                 self.markdown_preview_open = toggled;
             }
-            Message::LoginNameChanged(name) => {
-                self.modal_content.name_input = name;
-            }
-            Message::LoginServerChanged(server) => {
-                self.modal_content.server_input = server;
-            }
             Message::LoginButtonPressed => {
                 let doc = self.document.clone();
                 let read_password = self.read_password.clone();
@@ -604,6 +705,18 @@ impl Editor {
                 if !(self.modal_content.server_input.is_empty()) {
                     self.modal_content.server_input.clear();
                 }
+            }
+            Message::LoginNameChanged(name) => {
+                self.modal_content.name_input = name;
+                self.modal_content.validate_name();
+            }
+            Message::LoginServerChanged(server) => {
+                self.modal_content.server_input = server;
+                self.modal_content.validate_server();
+            }
+            Message::FilePathChanged(file_path) => {
+                self.modal_content.file_path_input = file_path;
+                self.modal_content.validate_file();
             }
             Message::RequestClose(id) => {
                 println!("Closing server...");
@@ -730,4 +843,22 @@ where
         )
     ]
     .into()
+}
+
+
+fn is_valid_markdown_file(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("md"))
+        .unwrap_or(false)
+}
+
+fn is_valid_url(url: &str) -> bool {
+    Url::parse(url).is_ok()
+}
+
+fn is_server_available(server: &str) -> bool {
+    // Replace with your logic to check server availability
+    true
 }
