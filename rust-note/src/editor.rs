@@ -325,10 +325,9 @@ impl Editor {
                             {
                                 let mut button = button("Start Session").style(button::secondary);
                                 if self.modal_content.name_input.len() >= 5
-                                    && (self.modal_content.file_path_input.clone().is_empty()
-                                        || is_valid_markdown_file(&self.modal_content.file_path_input.clone()))
-                                    // && (self.modal_content.server_input.clone().is_empty()
-                                    //     || is_valid_url(&self.modal_content.server_input))
+                                    && ((!self.modal_content.file_path_input.clone().is_empty()
+                                        && self.modal_content.clone().validate_file())
+                                    || (self.modal_content.file_path_input.clone().is_empty()))
                                 {
                                     button = button
                                         .on_press(Message::NoOp)
