@@ -38,3 +38,4 @@ argon2 = { version = "0.5.3", features = ["password-hash"] }
 rand_core = { version = "0.6.4", features = ["std"] }
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = "1.0.133"
+cola-crdt = { version = "0.1.1", features = ["encode", "serde"] }

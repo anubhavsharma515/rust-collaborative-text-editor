@@ -1,5 +1,6 @@
 use crate::server::start_server;
-use crate::server::UserCursorPositions;
+use crate::server::Document;
+use crate::server::Users;
 use crate::widgets;
 use iced::keyboard;
 use iced::mouse;
@@ -46,7 +47,7 @@ impl Default for SessionModal {
 
 pub struct Editor {
     content: text_editor::Content,
-    content_text: Arc<Mutex<String>>,
+    document: Arc<Mutex<Document>>,
     cursor_marker: CursorMarker,
     menubar: MenuBar,
     format_bar: FormatBar,
@@ -60,14 +61,14 @@ pub struct Editor {
     session_modal_open: bool,
     active_tab: TabId,
     server_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
-    users: Arc<Mutex<UserCursorPositions>>,
+    users: Arc<Mutex<Users>>,
     read_password: Option<String>,
     edit_password: Option<String>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Edit(text_editor::Action),
+    Action(text_editor::Action),
     Menu(MenuMessage),
     Format(TextStyle),
     LinkClicked(markdown::Url),
@@ -130,7 +131,7 @@ impl Editor {
         (
             Self {
                 content: text_editor::Content::new(),
-                content_text: Arc::new(Mutex::new(String::new())),
+                document: Arc::new(Mutex::new(Document::new(String::new(), 1))),
                 cursor_marker: CursorMarker::new(0.2),
                 menubar: MenuBar::new(),
                 format_bar: FormatBar::new(),
@@ -144,7 +145,7 @@ impl Editor {
                 session_modal_open: false,
                 active_tab: TabId::StartSession,
                 server_thread: Arc::new(Mutex::new(None)),
-                users: Arc::new(Mutex::new(UserCursorPositions::new())),
+                users: Arc::new(Mutex::new(Users::new())),
                 read_password: None,
                 edit_password: None,
             },
@@ -303,7 +304,7 @@ impl Editor {
             .wrapping(text::Wrapping::WordOrGlyph)
             .width(300)
             .height(Length::FillPortion(1))
-            .on_action(Message::Edit)
+            .on_action(Message::Action)
             .key_binding(|key_press| match key_press.key.as_ref() {
                 keyboard::Key::Character(BOLD_HOTKEY) if key_press.modifiers.command() => Some(
                     text_editor::Binding::Custom(Message::Format(TextStyle::Bold)),
@@ -382,20 +383,115 @@ impl Editor {
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::Edit(action) => {
-                self.content.perform(action);
+            Message::Action(action) => {
+                let (x, y) = self.content.cursor_position();
+                let mut is_blank_line = false;
+                let mut running_sum = 0;
+                let mut running_sum_vec = vec![0];
+                let lines = self.content.lines();
+                lines.enumerate().for_each(|(idx, line)| {
+                    if idx == x {
+                        is_blank_line = line.is_empty();
+                    }
+                    running_sum += line.len() + 1;
+                    running_sum_vec.push(running_sum);
+                });
+
+                let content_text = self.content.text();
+                let mut index = running_sum_vec.get(x).unwrap().clone() + y;
+
+                let doc_lock = self.document.clone();
+                let selection = self.content.selection().clone();
+
+                self.content.perform(action.clone());
                 let line = self.cursor_position_in_pixels();
                 self.cursor_marker = CursorMarker::new(line);
 
                 // Update markdown preview with the editor's text content
                 self.markdown_text = markdown::parse(&self.content.text()).collect();
 
-                // Update the shared content text
-                let text = self.content.text();
-                let content_lock = self.content_text.clone();
+                match action.clone() {
+                    text_editor::Action::Edit(_) => {}
+                    _ => return Task::done(Message::NoOp),
+                }
+
+                // Translate edit action to document operations
                 return Task::future(async move {
-                    let mut content_txt = content_lock.lock().await;
-                    *content_txt = text;
+                    let mut doc = doc_lock.lock().await;
+
+                    let num_deleted = if let Some(s) = selection {
+                        // Find the selection in a slice of the content text
+                        let start = if s.len() > index { 0 } else { index - s.len() };
+                        let end = if index + s.len() > content_text.len() {
+                            content_text.len()
+                        } else {
+                            index + s.len()
+                        };
+
+                        let text_to_search = content_text.get(start..end).unwrap_or("");
+                        if let Some(i) = text_to_search.find(&s) {
+                            index = i + start;
+                            let deletion = doc.delete(index..(index + s.len()));
+                            doc.integrate_deletion(deletion);
+                            s.len()
+                        } else {
+                            // Selection not found
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    match action {
+                        text_editor::Action::Edit(edit) => match edit {
+                            text_editor::Edit::Insert(ch) => {
+                                let insertion = doc.insert(index, ch.to_string());
+                                doc.integrate_insertion(insertion);
+
+                                if is_blank_line && !doc.check_newline_at(index + 1) {
+                                    let insertion = doc.insert(index + 1, "\n"); // Insert newline after character
+                                    doc.integrate_insertion(insertion);
+                                }
+                            }
+                            text_editor::Edit::Paste(text) => {
+                                let insertion = doc.insert(index, text.to_string());
+                                doc.integrate_insertion(insertion);
+
+                                if is_blank_line && !doc.check_newline_at(index + text.len()) {
+                                    let insertion = doc.insert(index + text.len(), "\n"); // Insert newline after string
+                                    doc.integrate_insertion(insertion);
+                                }
+                            }
+                            text_editor::Edit::Enter => {
+                                let insertion = doc.insert(index, "\n");
+                                doc.integrate_insertion(insertion);
+                            }
+                            text_editor::Edit::Delete => {
+                                if num_deleted == 0 && doc.len() > index + 1 {
+                                    let deletion = doc.delete(index..(index + 1));
+                                    doc.integrate_deletion(deletion);
+                                }
+
+                                if doc.len() == 1 {
+                                    let deletion = doc.delete(0..1); // Remove remaining newline character
+                                    doc.integrate_deletion(deletion);
+                                }
+                            }
+                            text_editor::Edit::Backspace => {
+                                if num_deleted == 0 && doc.len() > 1 {
+                                    let deletion = doc.delete((index - 1)..index);
+                                    doc.integrate_deletion(deletion);
+                                }
+
+                                if doc.len() == 1 {
+                                    let deletion = doc.delete(0..1); // Remove remaining newline character
+                                    doc.integrate_deletion(deletion);
+                                }
+                            }
+                        },
+                        _ => {}
+                    }
+
                     Message::NoOp
                 });
             }
@@ -431,16 +527,10 @@ impl Editor {
             Message::Format(text_style) => {
                 let _ = self.format_bar.update(text_style.clone()); // Update the format bar UI
 
-                match text_style {
-                    TextStyle::Bold => {
-                        self.toggle_formatting(TextStyle::Bold);
-                    }
-                    TextStyle::Italic => {
-                        self.toggle_formatting(TextStyle::Italic);
-                    }
-                    TextStyle::Strikethrough => {
-                        self.toggle_formatting(TextStyle::Strikethrough);
-                    }
+                return match text_style {
+                    TextStyle::Bold => self.toggle_formatting(TextStyle::Bold),
+                    TextStyle::Italic => self.toggle_formatting(TextStyle::Italic),
+                    TextStyle::Strikethrough => self.toggle_formatting(TextStyle::Strikethrough),
                     TextStyle::TextSize(size) => {
                         // Update the text size
                         let text_size = if let Ok(size) = size.parse::<f32>() {
@@ -450,22 +540,33 @@ impl Editor {
                         };
 
                         self.markdown_settings = markdown::Settings::with_text_size(text_size);
+                        Task::done(Message::NoOp)
                     }
-                }
+                };
             }
             Message::LinkClicked(url) => {
                 println!("Link clicked: {}", url);
             }
             Message::NoOp => {}
             Message::DeleteLine => {
-                self.content.perform(text_editor::Action::SelectLine);
-                self.content
-                    .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+                let tasks = vec![
+                    Task::done(Message::Action(text_editor::Action::SelectLine)),
+                    Task::done(Message::Action(text_editor::Action::Edit(
+                        text_editor::Edit::Delete,
+                    ))),
+                ];
+
+                return Task::batch(tasks);
             }
             Message::DeleteWord => {
-                self.content.perform(text_editor::Action::SelectWord);
-                self.content
-                    .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
+                let tasks = vec![
+                    Task::done(Message::Action(text_editor::Action::SelectWord)),
+                    Task::done(Message::Action(text_editor::Action::Edit(
+                        text_editor::Edit::Delete,
+                    ))),
+                ];
+
+                return Task::batch(tasks);
             }
             Message::ShortcutPaletteToggle => {
                 self.shortcut_palette_open = !self.shortcut_palette_open;
@@ -480,19 +581,16 @@ impl Editor {
                 self.modal_content.server_input = server;
             }
             Message::LoginButtonPressed => {
-                let content_text = self.content_text.clone();
+                let doc = self.document.clone();
                 let read_password = self.read_password.clone();
                 let edit_password = self.edit_password.clone();
                 let user_to_cursor_map = self.users.clone();
+                let server_thread_lock = self.server_thread.clone();
                 return Task::future(async move {
-                    start_server(
-                        read_password,
-                        edit_password,
-                        content_text,
-                        user_to_cursor_map,
-                    )
-                    .await;
-                    // TODO: Figure out a way to pass the handle to self.server_thread
+                    let mut server_thread = server_thread_lock.lock().await;
+                    *server_thread = Some(
+                        start_server(read_password, edit_password, doc, user_to_cursor_map).await,
+                    );
                     Message::NoOp
                 });
             }
@@ -520,7 +618,7 @@ impl Editor {
             }
             Message::CloseWindow(id) => {
                 println!("Window with id {:?} closed", id);
-                window::close::<iced::window::Id>(id);
+                return window::close::<iced::window::Id>(id).map(|_| Message::NoOp);
             }
         }
         Task::none()
@@ -539,7 +637,8 @@ impl Editor {
         line as f32 * line_height
     }
 
-    fn toggle_formatting(&mut self, format: TextStyle) {
+    fn toggle_formatting(&mut self, format: TextStyle) -> Task<Message> {
+        let mut tasks = Vec::new();
         // Get the current selection in the editor, if any, and wrap it in the formatting symbol
         if let Some(selection) = self.content.selection() {
             // Check if the selection is already formatted in which case we remove the formatting
@@ -585,19 +684,22 @@ impl Editor {
                     }
                 }
                 _ => {
-                    return;
+                    return Task::done(Message::NoOp);
                 }
             };
 
-            self.content
-                .perform(text_editor::Action::Edit(text_editor::Edit::Delete));
-            self.content
-                .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                    formatted_text.into(),
-                )));
+            // tasks.push(Task::done(Message::Action(text_editor::Action::Edit(
+            //     text_editor::Edit::Delete,
+            // ))));
+            tasks.push(Task::done(Message::Action(text_editor::Action::Edit(
+                text_editor::Edit::Paste(formatted_text.into()),
+            ))));
         }
-        self.content
-            .perform(text_editor::Action::Move(text_editor::Motion::WordLeft)); // Move cursor to the right of the inserted text
+
+        tasks.push(Task::done(Message::Action(text_editor::Action::Move(
+            text_editor::Motion::WordLeft,
+        )))); // Move cursor to the right of the inserted text
+        Task::batch(tasks)
     }
 }
 

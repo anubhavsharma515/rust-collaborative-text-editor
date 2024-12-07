@@ -1,4 +1,4 @@
-use crate::server::AppState;
+use crate::server::{AppState, DeleteRequest, InsertRequest, Insertion};
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
     body::Body,
@@ -11,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::TypedHeader;
+use cola::Replica;
 use futures::{
     sink::SinkExt,
     stream::{SplitSink, StreamExt},
@@ -150,7 +151,6 @@ async fn handle_edit_socket(
         cnt
     });
 
-    // If any one of the tasks exit, abort the other.
     tokio::select! {
         rv_a = (&mut send_task) => {
             match rv_a {
@@ -172,12 +172,9 @@ async fn handle_edit_socket(
 async fn broadcast(mut sender: SplitSink<WebSocket, Message>, state: AppState) -> i32 {
     let mut n_msg = 0;
     loop {
-        let content_text = state.content_text.lock().await;
+        let doc = state.document.lock().await;
         if sender
-            .send(Message::Text(format!(
-                "Document: {}",
-                content_text.to_string()
-            )))
+            .send(Message::Text(format!("Document: {}", doc.buffer)))
             .await
             .is_err()
         {
@@ -223,8 +220,34 @@ async fn process_message(
             let parts: Vec<&str> = t.split(":").collect();
             let mut iter = parts.into_iter();
             match iter.next() {
-                Some("Edit") => {
-                    *state.content_text.lock().await = iter.collect::<Vec<&str>>().join(":");
+                Some("Insert") => {
+                    let s = iter.collect::<Vec<&str>>().join(":");
+                    match serde_json::from_str::<InsertRequest>(s.trim()) {
+                        Ok(insert) => {
+                            if let Some(id) = state.users.lock().await.get_id(who) {
+                                let mut fork = Replica::decode(id as u64, &insert.replica).unwrap();
+                                let insertion = fork.inserted(insert.insert_at, insert.text.len());
+                                state.document.lock().await.integrate_insertion(Insertion {
+                                    text: insert.text,
+                                    crdt: insertion,
+                                });
+                            }
+                        }
+                        Err(e) => println!("Error parsing insert: {e}"),
+                    }
+                }
+                Some("Delete") => {
+                    let s = iter.collect::<Vec<&str>>().join(":");
+                    match serde_json::from_str::<DeleteRequest>(s.trim()) {
+                        Ok(delete) => {
+                            if let Some(id) = state.users.lock().await.get_id(who) {
+                                let mut fork = Replica::decode(id as u64, &delete.replica).unwrap();
+                                let deletion = fork.deleted(delete.range);
+                                state.document.lock().await.integrate_deletion(deletion);
+                            }
+                        }
+                        Err(e) => println!("Error parsing delete: {e}"),
+                    }
                 }
                 Some("Cursor") => {
                     let s = iter.collect::<Vec<&str>>().join(":");
