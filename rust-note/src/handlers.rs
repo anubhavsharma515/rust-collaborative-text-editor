@@ -1,4 +1,7 @@
-use crate::server::{AppState, DeleteRequest, InsertRequest, Insertion};
+use crate::{
+    editor::CursorMarker,
+    server::{AppState, DeleteRequest, InsertRequest, Insertion},
+};
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
     body::Body,
@@ -251,7 +254,7 @@ async fn process_message(
                 }
                 Some("Cursor") => {
                     let s = iter.collect::<Vec<&str>>().join(":");
-                    match serde_json::from_str(s.trim()) {
+                    match serde_json::from_str::<CursorMarker>(s.trim()) {
                         Ok(cursor) => state.users.lock().await.add_user(who, cursor),
                         Err(e) => println!("Error parsing cursor: {e}"),
                     }
