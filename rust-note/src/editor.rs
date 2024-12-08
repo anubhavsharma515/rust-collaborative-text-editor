@@ -16,6 +16,7 @@ use iced::{window, Pixels};
 use iced::{Alignment, Element, Length, Task, Theme};
 use iced::{Point, Rectangle, Renderer, Size};
 use iced_aw::{TabLabel, Tabs};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::ffi;
@@ -111,6 +112,7 @@ pub struct Editor {
     read_password: Option<String>,
     edit_password: Option<String>,
     joined_session: bool,
+    started_session: bool,
     client_state: State,
 }
 
@@ -151,14 +153,28 @@ pub enum TabId {
     JoinSession,
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct CursorMarker {
     pub y: f32,
+    pub color: (f32, f32, f32),
 }
 
 impl CursorMarker {
     pub fn new(y: f32) -> Self {
-        Self { y }
+        let mut rng = rand::thread_rng();
+
+        // Generate random RGB values
+        let r = rng.gen_range(0.0..=1.0);
+        let g = rng.gen_range(0.0..=1.0);
+        let b = rng.gen_range(0.0..=1.0);
+        Self {
+            y,
+            color: (r, g, b),
+        }
+    }
+
+    pub fn move_cursor(&mut self, y: f32) {
+        self.y = y;
     }
 }
 
@@ -179,7 +195,10 @@ impl<Message> canvas::Program<Message> for CursorMarker {
         // let offset_y = 2.0; // Offset for padding/margin adjustments
 
         let rectangle = icedPath::rectangle(Point::new(0.0, self.y), Size::new(5.5, 21.0));
-        frame.fill(&rectangle, Color::from_rgb(0.0, 0.8, 0.2));
+        frame.fill(
+            &rectangle,
+            Color::from_rgb(self.color.0, self.color.1, self.color.2),
+        );
         vec![frame.into_geometry()]
     }
 }
@@ -205,6 +224,7 @@ impl Editor {
                 server_thread: Arc::new(Mutex::new(None)),
                 users: Arc::new(Mutex::new(Users::new())),
                 joined_session: false,
+                started_session: false,
                 read_password: None,
                 edit_password: None,
                 client_state: State::Disconnected,
@@ -400,10 +420,6 @@ impl Editor {
         .padding(10)
         .style(container::rounded_box);
 
-        let marker: Canvas<CursorMarker, Message> = Canvas::new(self.cursor_marker.clone())
-            .width(Length::FillPortion(1))
-            .height(Length::Fill);
-
         let editor = TextEditor::new(&self.content)
             .line_height(text::LineHeight::Absolute(Pixels(21.0)))
             .highlight(
@@ -450,6 +466,42 @@ impl Editor {
                 _ => text_editor::Binding::from_key_press(key_press),
             });
 
+        let users_lock = self.users.clone();
+
+        let markers: Vec<CursorMarker> = {
+            let users_lock = users_lock.clone();
+
+            // Spawn a new thread to run the async code
+            let handle = std::thread::spawn(move || {
+                // Create a new runtime inside the thread
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let users = users_lock.lock().await;
+                    users.get_all_cursors()
+                })
+            });
+
+            // Wait for the thread to finish and get the result
+            handle.join().unwrap()
+        };
+
+        let mut marker_elements: Vec<Element<Message>> = markers
+            .into_iter()
+            .map(|marker| {
+                // Create a Canvas for each marker and convert it to an Element
+                Canvas::<CursorMarker, Message>::new(marker)
+                    .width(Length::FillPortion(1))
+                    .height(Length::FillPortion(1))
+                    .into() // Convert the Canvas into an Element<Message>
+            })
+            .collect();
+
+        let mut stack_elements = Vec::new();
+        stack_elements.push(editor.into());
+        stack_elements.append(&mut marker_elements);
+
+        // println!("Marker elements: {:?}", marker_elements);
+
         let content = column![
             row![
                 self.menubar.view().map(Message::Menu),
@@ -460,7 +512,7 @@ impl Editor {
             .spacing(15),
             self.format_bar.view().map(Message::Format),
             row![
-                Stack::with_children(vec![editor.into(), marker.into()])
+                Stack::with_children(stack_elements)
                     .width(Length::FillPortion(1))
                     .height(Length::FillPortion(1)),
                 if self.markdown_preview_open {
@@ -518,12 +570,14 @@ impl Editor {
 
                 self.content.perform(action.clone());
                 let line = self.cursor_position_in_pixels();
-                self.cursor_marker = CursorMarker::new(line);
+                self.cursor_marker.move_cursor(line);
 
                 if let State::Connected(ref mut connection) = self.client_state {
                     if self.joined_session {
-                        let cursor_data = serde_json::to_string(&json!({ "y": line }))
-                            .expect("Failed to serialize cursor data");
+                        let cursor_data = serde_json::to_string(
+                            &json!({ "y": line, "color": self.cursor_marker.color }),
+                        )
+                        .expect("Failed to serialize cursor data");
                         let message = format!("Cursor: {}", cursor_data);
 
                         // Send the message
@@ -723,6 +777,7 @@ impl Editor {
                 let read_password = self.read_password.clone();
                 let edit_password = self.edit_password.clone();
                 let user_to_cursor_map = self.users.clone();
+                self.started_session = !self.started_session;
                 // TODO: Add host user to cursor map
                 let server_thread_lock = self.server_thread.clone();
                 return Task::future(async move {
