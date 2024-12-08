@@ -44,7 +44,6 @@ pub struct SessionModal {
     pub read_password_input: String,
     pub file_path_input: String,
     pub name_error: String,
-    pub server_error: String,
     pub file_error: String,
 }
 
@@ -57,7 +56,6 @@ impl Default for SessionModal {
             read_password_input: String::new(),
             file_path_input: String::new(),
             name_error: String::new(),
-            server_error: String::new(),
             file_error: String::new(),
         }
     }
@@ -606,7 +604,6 @@ impl Editor {
                                     .await
                                     .add_user(localhost, CursorMarker::new(line));
                             }
-
                             Message::NoOp
                         });
                     }
@@ -790,7 +787,18 @@ impl Editor {
             }
             Message::Echo(event) => match event {
                 client::Event::Connected(connection) => {
-                    self.client_state = State::Connected(connection);
+                    self.client_state = State::Connected(connection.clone());
+
+                    let line = self.cursor_position_in_pixels();
+
+                    let cursor_data = serde_json::to_string(
+                        &json!({ "y": line, "color": self.cursor_marker.color }),
+                    )
+                    .expect("Failed to serialize cursor data");
+                    let message = format!("Cursor: {}", cursor_data);
+
+                    // Send the message
+                    connection.clone().send(client::Message::User(message));
                 }
                 client::Event::Disconnected => {
                     self.client_state = State::Disconnected;
@@ -830,10 +838,15 @@ impl Editor {
 
                             // Update the document content in the editor
                             let parsed_content = document_data.trim().to_string();
+                            let editor_content = self.content.text().trim().to_string(); // Ensure both are strings
 
+                            // Debug logs to inspect the content comparison
+                            println!("Current content: '{}'", editor_content);
+                            println!("Parsed content: '{}'", parsed_content);
+                            println!("Are they equal? {}", editor_content == parsed_content);
                             // Optionally reposition the cursor
                             let (x, y) = self.content.cursor_position();
-                            if self.content.text() != parsed_content {
+                            if editor_content != parsed_content {
                                 self.content = text_editor::Content::with_text(&parsed_content);
                             };
                             self.content
