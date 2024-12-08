@@ -16,8 +16,8 @@ use iced::{window, Pixels};
 use iced::{Alignment, Element, Length, Task, Theme};
 use iced::{Point, Rectangle, Renderer, Size};
 use iced_aw::{TabLabel, Tabs};
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::ffi;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -518,6 +518,20 @@ impl Editor {
                 let line = self.cursor_position_in_pixels();
                 self.cursor_marker = CursorMarker::new(line);
 
+                if let State::Connected(ref mut connection) = self.client_state {
+                    if self.joined_session {
+                        let cursor_data = serde_json::to_string(&json!({ "y": line }))
+                            .expect("Failed to serialize cursor data");
+                        let message = format!("Cursor: {}", cursor_data);
+
+                        // Send the message
+                        connection.send(client::Message::User(message));
+                    } else {
+                        println!("Cannot send message; not joined in a session.");
+                    }
+                } else {
+                };
+
                 // Update markdown preview with the editor's text content
                 self.markdown_text = markdown::parse(&self.content.text()).collect();
 
@@ -706,7 +720,16 @@ impl Editor {
                 client::Event::Disconnected => {
                     self.client_state = State::Disconnected;
                 }
-                _ => {}
+                client::Event::MessageReceived(message) => {
+                    // Grab the users current cursor position and save,
+                    // Once the content is updated, move the cursor to the saved position
+                    let (x, y) = self.content.cursor_position();
+                    // self.users.save_cursor_position(self.file.clone(), x, y);
+                    // Process message is simply a match arm
+                    // self.content = text_editor::Content::with_text(&message.as_str());
+                    // self.content.perform(text_editor::Action::Move(
+                    // text_editor::);
+                }
             },
             Message::ReadPasswordChanged(password) => {
                 self.modal_content.read_password_input = password;

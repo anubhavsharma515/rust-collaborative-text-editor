@@ -16,10 +16,11 @@ pub fn connect() -> impl Stream<Item = Event> {
         loop {
             match &mut state {
                 State::Disconnected => {
-                    const ECHO_SERVER: &str = "ws://0.0.0.0:8080/read";
+                    const ECHO_SERVER: &str = "ws://0.0.0.0:8080/edit";
 
                     match async_tungstenite::tokio::connect_async(ECHO_SERVER).await {
                         Ok((websocket, _)) => {
+                            // Split the websocket into a channel for seding and receiving messages
                             let (sender, receiver) = mpsc::channel(100);
 
                             let _ = output.send(Event::Connected(Connection(sender))).await;
@@ -36,8 +37,10 @@ pub fn connect() -> impl Stream<Item = Event> {
                 State::Connected(websocket, input) => {
                     let mut fused_websocket = websocket.by_ref().fuse();
 
+                    // Run the tasks concurrently
                     futures::select! {
                         received = fused_websocket.select_next_some() => {
+                            // Receive the message from the websocket
                             match received {
                                 Ok(tungstenite::Message::Text(message)) => {
                                    let _ = output.send(Event::MessageReceived(Message::User(message))).await;
@@ -72,6 +75,7 @@ pub fn connect() -> impl Stream<Item = Event> {
 enum State {
     Disconnected,
     Connected(
+        // Simply a connection to the websocket
         async_tungstenite::WebSocketStream<async_tungstenite::tokio::ConnectStream>,
         mpsc::Receiver<Message>,
     ),
@@ -95,6 +99,8 @@ impl Connection {
     }
 }
 
+// Check if this needs to be an axum ws message
+// Will need to be able to parse the message
 #[derive(Debug, Clone)]
 pub enum Message {
     Connected,
