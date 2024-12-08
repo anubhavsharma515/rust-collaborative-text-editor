@@ -44,6 +44,13 @@ impl Users {
     pub fn get_id(&self, socket_addr: SocketAddr) -> Option<usize> {
         self.user_map.get(&socket_addr).map(|user| user.id)
     }
+
+    pub fn get_all_cursors(&self) -> Vec<CursorMarker> {
+        self.user_map
+            .values()
+            .map(|user| user.cursor.clone())
+            .collect()
+    }
 }
 
 pub struct Document {
