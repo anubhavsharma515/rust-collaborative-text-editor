@@ -721,14 +721,50 @@ impl Editor {
                     self.client_state = State::Disconnected;
                 }
                 client::Event::MessageReceived(message) => {
-                    // Grab the users current cursor position and save,
-                    // Once the content is updated, move the cursor to the saved position
-                    let (x, y) = self.content.cursor_position();
-                    // self.users.save_cursor_position(self.file.clone(), x, y);
-                    // Process message is simply a match arm
-                    // self.content = text_editor::Content::with_text(&message.as_str());
-                    // self.content.perform(text_editor::Action::Move(
-                    // text_editor::);
+                    // Extract the message as a string
+                    let message_text = message.as_str();
+
+                    // Check if the message contains a "Users" section
+                    if message_text.contains("Users") {
+                        // Extract the part of the message that represents users data
+                        if let Some(users_start) = message_text.find("Users:") {
+                            let users_data = &message_text[users_start + 6..]; // Skip "Users:"
+
+                            // Attempt to parse the users data into a Users struct (you'll need to know how it's formatted)
+                            if let Ok(users) = serde_json::from_str::<Users>(users_data.trim()) {
+                                // Clone the Arc<Mutex<Users>> for async access
+                                let users_lock = self.users.clone();
+
+                                // Update the mutex with the new users data
+                                return Task::future(async move {
+                                    let mut locked_users = users_lock.lock().await;
+                                    *locked_users = users;
+                                    Message::NoOp
+                                });
+                            } else {
+                                println!("Failed to parse users data");
+                            }
+                        }
+                    }
+
+                    // Check if the message contains a "Document" section
+                    if message_text.contains("Document") {
+                        // Extract the part of the message that represents the document data
+                        if let Some(document_start) = message_text.find("Document:") {
+                            let document_data = &message_text[document_start + 9..]; // Skip "Document:"
+
+                            // Update the document content in the editor
+                            let parsed_content = document_data.trim().to_string();
+
+                            // Optionally reposition the cursor
+                            let (x, y) = self.content.cursor_position();
+                            if self.content.text() != parsed_content {
+                                self.content = text_editor::Content::with_text(&parsed_content);
+                            };
+                            self.content
+                                .perform(text_editor::Action::Drag(Point::new(x as f32, y as f32)));
+                        }
+                    }
                 }
             },
             Message::ReadPasswordChanged(password) => {
