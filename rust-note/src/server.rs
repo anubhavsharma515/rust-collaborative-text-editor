@@ -51,6 +51,10 @@ impl Users {
             .map(|user| user.cursor.clone())
             .collect()
     }
+
+    pub fn delete_all_users(&mut self) {
+        self.user_map.clear();
+    }
 }
 
 pub struct Document {

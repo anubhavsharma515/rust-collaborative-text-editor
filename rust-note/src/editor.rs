@@ -885,11 +885,20 @@ impl Editor {
             Message::RequestClose(id) => {
                 println!("Closing server...");
                 let server_thread_lock = self.server_thread.clone();
+                let users_lock = self.users.clone();
+
                 return Task::future(async move {
+                    // Abort the server thread if it exists
                     let server_thread_mutex = server_thread_lock.lock().await;
                     if let Some(server_thread) = &*server_thread_mutex {
                         server_thread.abort();
                     }
+
+                    // Clear all users
+                    let mut users = users_lock.lock().await;
+                    users.delete_all_users();
+
+                    // Send the close window message
                     Message::CloseWindow(id)
                 });
             }
