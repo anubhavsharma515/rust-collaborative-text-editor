@@ -33,7 +33,12 @@ impl Users {
 
     pub fn add_user(&mut self, socket_addr: SocketAddr, cursor: CursorMarker) {
         let id = self.user_map.len() + 1;
-        self.user_map.insert(socket_addr, User { id, cursor });
+        self.user_map
+            .entry(socket_addr)
+            .and_modify(|user| {
+                user.cursor = cursor;
+            })
+            .or_insert(User { id, cursor });
     }
 
     pub fn get_id(&self, socket_addr: SocketAddr) -> Option<usize> {

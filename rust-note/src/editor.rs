@@ -19,11 +19,13 @@ use iced_aw::{TabLabel, Tabs};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::ffi;
+use std::net::IpAddr;
+use std::net::Ipv4Addr;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use url::Url;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
 use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage}; // For form parameters
 
@@ -537,6 +539,23 @@ impl Editor {
 
                 match action.clone() {
                     text_editor::Action::Edit(_) => {}
+                    text_editor::Action::Click(_) => {
+                        // Update the host user's cursor position in the users map
+                        let localhost =
+                            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
+                        let users_lock = self.users.clone();
+                        let server_thread_lock = self.server_thread.clone();
+                        return Task::future(async move {
+                            if let Some(_) = &*server_thread_lock.lock().await {
+                                users_lock
+                                    .lock()
+                                    .await
+                                    .add_user(localhost, CursorMarker::new(line));
+                            }
+
+                            Message::NoOp
+                        });
+                    }
                     _ => return Task::done(Message::NoOp),
                 }
 
@@ -704,6 +723,7 @@ impl Editor {
                 let read_password = self.read_password.clone();
                 let edit_password = self.edit_password.clone();
                 let user_to_cursor_map = self.users.clone();
+                // TODO: Add host user to cursor map
                 let server_thread_lock = self.server_thread.clone();
                 return Task::future(async move {
                     let mut server_thread = server_thread_lock.lock().await;
