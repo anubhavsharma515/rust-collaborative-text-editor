@@ -526,15 +526,19 @@ impl Editor {
                 match action.clone() {
                     text_editor::Action::Edit(_) => {}
                     text_editor::Action::Click(_) => {
-                        // Update the local user's cursor position in the users map
+                        // Update the host user's cursor position in the users map
                         let localhost =
                             SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
                         let users_lock = self.users.clone();
+                        let server_thread_lock = self.server_thread.clone();
                         return Task::future(async move {
-                            users_lock
-                                .lock()
-                                .await
-                                .add_user(localhost, CursorMarker::new(line));
+                            if let Some(_) = &*server_thread_lock.lock().await {
+                                users_lock
+                                    .lock()
+                                    .await
+                                    .add_user(localhost, CursorMarker::new(line));
+                            }
+
                             Message::NoOp
                         });
                     }
