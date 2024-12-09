@@ -6,7 +6,6 @@ use crate::{
 use cola::Replica;
 use futures::{channel::mpsc, SinkExt, Stream};
 use iced::{
-    advanced::widget::operation::focusable::focus_next,
     highlighter, keyboard, mouse, stream,
     widget::{
         button,
