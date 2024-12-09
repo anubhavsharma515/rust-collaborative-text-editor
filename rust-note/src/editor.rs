@@ -269,9 +269,15 @@ impl Editor {
         markdown_settings.text_size = iced::Pixels(50.0);
 
         let status = row![
-            button("Collaborate")
-                .on_press(Message::SessionModalToggle)
-                .style(button::primary),
+            {
+                let mut button = button("Collaborate").style(button::secondary);
+                if !(self.started_session || self.joined_session) {
+                    button = button
+                        .on_press(Message::SessionModalToggle)
+                        .style(button::primary)
+                }
+                button
+            },
             text(if let Some(path) = &self.file {
                 let path = path.display().to_string();
 
