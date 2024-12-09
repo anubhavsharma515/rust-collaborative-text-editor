@@ -6,12 +6,13 @@ use crate::{
 use cola::Replica;
 use futures::{channel::mpsc, SinkExt, Stream};
 use iced::{
+    advanced::widget::operation::focusable::focus_next,
     highlighter, keyboard, mouse, stream,
-    widget::canvas::{self, Frame, Path as icedPath},
     widget::{
-        button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
-        scrollable, stack, text, text_editor, text_input, toggler, Canvas, Container, Stack, Text,
-        TextEditor,
+        button,
+        canvas::{self, Frame, Path as icedPath},
+        center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
+        stack, text, text_editor, text_input, toggler, Canvas, Container, Stack, Text, TextEditor,
     },
     window, Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size,
     Subscription, Task, Theme,
@@ -147,7 +148,8 @@ pub enum Message {
     JoinSessionPressed,
     TabSelected(TabId),
     Echo(client::Event),
-    RequestClose(iced::window::Id),
+    RequestClose,
+    SessionClosed,
     CloseWindow(iced::window::Id),
     WorkerReady(mpsc::Sender<Input>),
 }
@@ -270,12 +272,19 @@ impl Editor {
 
         let status = row![
             {
-                let mut button = button("Collaborate").style(button::secondary);
-                if !(self.started_session || self.joined_session) {
-                    button = button
+                let button = if self.started_session {
+                    button("Stop Session")
+                        .on_press(Message::RequestClose)
+                        .style(button::primary)
+                } else if self.joined_session {
+                    button("Leave Session")
+                        .on_press(Message::NoOp)
+                        .style(button::primary)
+                } else {
+                    button("Collaborate")
                         .on_press(Message::SessionModalToggle)
                         .style(button::primary)
-                }
+                };
                 button
             },
             text(if let Some(path) = &self.file {
@@ -869,13 +878,15 @@ impl Editor {
                     return Task::done(Message::NoOp);
                 }
 
+                self.session_modal_open = !self.session_modal_open;
+                self.started_session = true;
+
                 let doc = self.document.clone();
                 let is_dirty_lock = self.is_dirty.clone();
                 let read_password = self.read_password.clone();
                 let edit_password = self.edit_password.clone();
                 let users_lock = self.users.clone();
                 let is_moved_lock = self.is_moved.clone();
-                self.started_session = !self.started_session;
                 let server_thread_lock = self.server_thread.clone();
                 let server_worker = self.server_worker.clone().unwrap();
                 return Task::future(async move {
@@ -996,6 +1007,7 @@ impl Editor {
             }
             Message::JoinSessionPressed => {
                 self.joined_session = true;
+                self.session_modal_open = !self.session_modal_open;
             }
             Message::SessionModalToggle => {
                 self.session_modal_open = !self.session_modal_open;
@@ -1012,7 +1024,7 @@ impl Editor {
                 self.modal_content.file_path_input = file_path;
                 self.modal_content.validate_file();
             }
-            Message::RequestClose(id) => {
+            Message::RequestClose => {
                 println!("Closing server...");
                 let server_thread_lock = self.server_thread.clone();
                 let users_lock = self.users.clone();
@@ -1029,8 +1041,12 @@ impl Editor {
                     users.delete_all_users();
 
                     // Send the close window message
-                    Message::CloseWindow(id)
+                    Message::SessionClosed
                 });
+            }
+            Message::SessionClosed => {
+                println!("Server closed");
+                self.started_session = false;
             }
             Message::CloseWindow(id) => {
                 println!("Window with id {:?} closed", id);
