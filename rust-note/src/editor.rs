@@ -107,6 +107,7 @@ pub struct Editor {
     active_tab: TabId,
     server_thread: Arc<Mutex<Option<JoinHandle<()>>>>,
     users: Arc<Mutex<Users>>,
+    user_cursors: Vec<CursorMarker>,
     read_password: Option<String>,
     edit_password: Option<String>,
     joined_session: bool,
@@ -137,6 +138,7 @@ pub enum Message {
     ReadPasswordChanged(String),
     FilePathChanged(String),
     StartSessionPressed,
+    SessionStarted,
     JoinSessionPressed,
     TabSelected(TabId),
     Echo(client::Event),
@@ -221,6 +223,7 @@ impl Editor {
                 active_tab: TabId::StartSession,
                 server_thread: Arc::new(Mutex::new(None)),
                 users: Arc::new(Mutex::new(Users::new())),
+                user_cursors: Vec::new(),
                 joined_session: false,
                 started_session: false,
                 read_password: None,
@@ -464,26 +467,9 @@ impl Editor {
                 _ => text_editor::Binding::from_key_press(key_press),
             });
 
-        let users_lock = self.users.clone();
-
-        let markers: Vec<CursorMarker> = {
-            let users_lock = users_lock.clone();
-
-            // Spawn a new thread to run the async code
-            let handle = std::thread::spawn(move || {
-                // Create a new runtime inside the thread
-                let rt = tokio::runtime::Runtime::new().unwrap();
-                rt.block_on(async {
-                    let users = users_lock.lock().await;
-                    users.get_all_cursors()
-                })
-            });
-
-            // Wait for the thread to finish and get the result
-            handle.join().unwrap()
-        };
-
-        let mut marker_elements: Vec<Element<Message>> = markers
+        let mut marker_elements: Vec<Element<Message>> = self
+            .user_cursors
+            .clone()
             .into_iter()
             .map(|marker| {
                 // Create a Canvas for each marker and convert it to an Element
@@ -569,6 +555,7 @@ impl Editor {
                 self.content.perform(action.clone());
                 let line = self.cursor_position_in_pixels();
                 self.cursor_marker.move_cursor(line);
+                let cursor_marker = self.cursor_marker.clone();
 
                 if let State::Connected(ref mut connection) = self.client_state {
                     if self.joined_session {
@@ -602,9 +589,9 @@ impl Editor {
                                 users_lock
                                     .lock()
                                     .await
-                                    .add_user(localhost, CursorMarker::new(line));
+                                    .add_user(localhost, cursor_marker.clone());
                             }
-                            Message::NoOp
+                            Message::SessionStarted
                         });
                     }
                     _ => return Task::done(Message::NoOp),
@@ -775,6 +762,7 @@ impl Editor {
                 let edit_password = self.edit_password.clone();
                 let user_to_cursor_map = self.users.clone();
                 self.started_session = !self.started_session;
+
                 // TODO: Add host user to cursor map
                 let server_thread_lock = self.server_thread.clone();
                 return Task::future(async move {
@@ -784,6 +772,25 @@ impl Editor {
                     );
                     Message::NoOp
                 });
+            }
+            Message::SessionStarted => {
+                let users_lock = self.users.clone();
+                self.user_cursors = {
+                    let users_lock = users_lock.clone();
+
+                    // Spawn a new thread to run the async code
+                    let handle = std::thread::spawn(move || {
+                        // Create a new runtime inside the thread
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        rt.block_on(async {
+                            let users = users_lock.lock().await;
+                            users.get_all_cursors()
+                        })
+                    });
+
+                    // Wait for the thread to finish and get the result
+                    handle.join().unwrap()
+                };
             }
             Message::Echo(event) => match event {
                 client::Event::Connected(connection) => {
@@ -802,22 +809,26 @@ impl Editor {
                 }
                 client::Event::Disconnected => {
                     self.client_state = State::Disconnected;
+                    println!("DISCONNECTED");
+                    self.user_cursors.clear();
                 }
                 client::Event::MessageReceived(message) => {
                     // Extract the message as a string
                     let message_text = message.as_str();
+                    println!("Users data: {}", message_text);
 
                     // Check if the message contains a "Users" section
                     if message_text.contains("Users") {
                         // Extract the part of the message that represents users data
                         if let Some(users_start) = message_text.find("Users:") {
                             let users_data = &message_text[users_start + 6..]; // Skip "Users:"
+                            println!("Users data: {}", users_data);
 
                             // Attempt to parse the users data into a Users struct (you'll need to know how it's formatted)
                             if let Ok(users) = serde_json::from_str::<Users>(users_data.trim()) {
                                 // Clone the Arc<Mutex<Users>> for async access
                                 let users_lock = self.users.clone();
-
+                                self.user_cursors = users.get_all_cursors();
                                 // Update the mutex with the new users data
                                 return Task::future(async move {
                                     let mut locked_users = users_lock.lock().await;

@@ -13,13 +13,13 @@ use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, ops::Range, sync::Arc};
 use tokio::{sync::Mutex, task::JoinHandle};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     pub id: usize,
     pub cursor: CursorMarker,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Users {
     user_map: HashMap<SocketAddr, User>,
 }
