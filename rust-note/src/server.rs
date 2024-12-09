@@ -63,12 +63,15 @@ pub struct Document {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct DocumentBroadcast {
+    pub text: String,
+    pub replica: EncodedReplica,
+}
+
 pub struct Insertion {
     pub text: String,
     pub crdt: cola::Insertion,
 }
-
-impl Insertion {}
 
 #[derive(Serialize, Deserialize)]
 pub struct InsertRequest {
@@ -141,14 +144,18 @@ pub struct AppState {
     pub read_access_hash: Option<String>,
     pub write_access_hash: Option<String>,
     pub document: Arc<Mutex<Document>>,
+    pub is_dirty: Arc<Mutex<bool>>,
     pub users: Arc<Mutex<Users>>,
+    pub is_moved: Arc<Mutex<bool>>,
 }
 
 pub async fn start_server(
     read_access_pass: Option<String>,
     write_access_pass: Option<String>,
     document: Arc<Mutex<Document>>,
+    is_dirty: Arc<Mutex<bool>>,
     users: Arc<Mutex<Users>>,
+    is_moved: Arc<Mutex<bool>>,
 ) -> JoinHandle<()> {
     let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
     let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
@@ -156,7 +163,9 @@ pub async fn start_server(
         read_access_hash,
         write_access_hash,
         document,
+        is_dirty,
         users,
+        is_moved,
     };
 
     let app = Router::new()

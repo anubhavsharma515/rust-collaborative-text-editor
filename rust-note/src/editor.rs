@@ -1,8 +1,11 @@
 use crate::client;
 use crate::server::start_server;
 use crate::server::Document;
+use crate::server::DocumentBroadcast;
+use crate::server::InsertRequest;
 use crate::server::Users;
 use crate::widgets;
+use cola::Replica;
 use iced::keyboard;
 use iced::mouse;
 use iced::widget::canvas::{self, Canvas, Frame, Path as icedPath};
@@ -93,7 +96,9 @@ impl SessionModal {
 pub struct Editor {
     content: text_editor::Content,
     document: Arc<Mutex<Document>>,
+    is_dirty: Arc<Mutex<bool>>,
     cursor_marker: CursorMarker,
+    is_moved: Arc<Mutex<bool>>,
     menubar: MenuBar,
     format_bar: FormatBar,
     file: Option<PathBuf>,
@@ -209,7 +214,9 @@ impl Editor {
             Self {
                 content: text_editor::Content::new(),
                 document: Arc::new(Mutex::new(Document::new(String::new(), 1))),
+                is_dirty: Arc::new(Mutex::new(false)),
                 cursor_marker: CursorMarker::new(0.2),
+                is_moved: Arc::new(Mutex::new(false)),
                 menubar: MenuBar::new(),
                 format_bar: FormatBar::new(),
                 file: None,
@@ -550,6 +557,7 @@ impl Editor {
                 let mut index = running_sum_vec.get(x).unwrap().clone() + y;
 
                 let doc_lock = self.document.clone();
+                let is_dirty_lock = self.is_dirty.clone();
                 let selection = self.content.selection().clone();
 
                 self.content.perform(action.clone());
@@ -557,125 +565,165 @@ impl Editor {
                 self.cursor_marker.move_cursor(line);
                 let cursor_marker = self.cursor_marker.clone();
 
-                if let State::Connected(ref mut connection) = self.client_state {
-                    if self.joined_session {
-                        let cursor_data = serde_json::to_string(
-                            &json!({ "y": line, "color": self.cursor_marker.color }),
-                        )
-                        .expect("Failed to serialize cursor data");
-                        let message = format!("Cursor: {}", cursor_data);
-
-                        // Send the message
-                        connection.send(client::Message::User(message));
-                    } else {
-                        println!("Cannot send message; not joined in a session.");
-                    }
-                } else {
-                };
-
                 // Update markdown preview with the editor's text content
                 self.markdown_text = markdown::parse(&self.content.text()).collect();
 
                 match action.clone() {
-                    text_editor::Action::Edit(_) => {}
-                    text_editor::Action::Click(_) => {
-                        // Update the host user's cursor position in the users map
-                        let localhost =
-                            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
+                    text_editor::Action::Edit(edit) => {
                         let users_lock = self.users.clone();
                         let server_thread_lock = self.server_thread.clone();
+                        let is_moved_lock = self.is_moved.clone();
+                        // Translate local user edit action to document operations
                         return Task::future(async move {
-                            if let Some(_) = &*server_thread_lock.lock().await {
-                                users_lock
-                                    .lock()
-                                    .await
-                                    .add_user(localhost, cursor_marker.clone());
+                            let mut doc = doc_lock.lock().await;
+
+                            let num_deleted = if let Some(s) = selection {
+                                // Find the selection in a slice of the content text
+                                let start = if s.len() > index { 0 } else { index - s.len() };
+                                let end = if index + s.len() > content_text.len() {
+                                    content_text.len()
+                                } else {
+                                    index + s.len()
+                                };
+
+                                let text_to_search = content_text.get(start..end).unwrap_or("");
+                                if let Some(i) = text_to_search.find(&s) {
+                                    index = i + start;
+                                    let deletion = doc.delete(index..(index + s.len()));
+                                    doc.integrate_deletion(deletion);
+                                    s.len()
+                                } else {
+                                    // Selection not found
+                                    0
+                                }
+                            } else {
+                                0
+                            };
+
+                            match edit {
+                                text_editor::Edit::Insert(ch) => {
+                                    let mut text = ch.to_string();
+
+                                    if is_blank_line && !doc.check_newline_at(index) {
+                                        text.push_str("\n"); // Insert newline after character
+                                    }
+
+                                    // TODO: Send the insertion request json along the socket to the server
+                                    // let insertion_req = InsertRequest {
+                                    //     insert_at: index,
+                                    //     text: text.clone(),
+                                    //     replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    // };
+                                    // let insertion_req_json =
+                                    //     serde_json::to_string(&insertion_req).unwrap();
+
+                                    let insertion = doc.insert(index, text);
+                                    doc.integrate_insertion(insertion);
+                                }
+                                text_editor::Edit::Paste(text) => {
+                                    let mut text = text.to_string();
+
+                                    if is_blank_line && !doc.check_newline_at(index) {
+                                        text.push_str("\n"); // Insert newline after string
+                                    }
+
+                                    // TODO: Send the insertion request json along the socket to the server
+                                    // let insertion_req = InsertRequest {
+                                    //     insert_at: index,
+                                    //     text: text.clone(),
+                                    //     replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    // };
+                                    // let insertion_req_json =
+                                    //     serde_json::to_string(&insertion_req).unwrap();
+
+                                    let insertion = doc.insert(index, text);
+                                    doc.integrate_insertion(insertion);
+                                }
+                                text_editor::Edit::Enter => {
+                                    let text = String::from("\n");
+
+                                    // TODO: Send the insertion request json along the socket to the server
+                                    // let insertion_req = InsertRequest {
+                                    //     insert_at: index,
+                                    //     text: text.clone(),
+                                    //     replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    // };
+                                    // let insertion_req_json =
+                                    //     serde_json::to_string(&insertion_req).unwrap();
+
+                                    let insertion = doc.insert(index, text);
+                                    doc.integrate_insertion(insertion);
+                                }
+                                text_editor::Edit::Delete => {
+                                    if num_deleted == 0 && doc.len() > index + 1 {
+                                        let deletion = doc.delete(index..(index + 1));
+                                        doc.integrate_deletion(deletion);
+                                    }
+
+                                    if doc.len() == 1 {
+                                        let deletion = doc.delete(0..1); // Remove remaining newline character
+                                        doc.integrate_deletion(deletion);
+                                    }
+                                }
+                                text_editor::Edit::Backspace => {
+                                    if num_deleted == 0 && doc.len() > 1 {
+                                        let deletion = doc.delete((index - 1)..index);
+                                        doc.integrate_deletion(deletion);
+                                    }
+
+                                    if doc.len() == 1 {
+                                        let deletion = doc.delete(0..1); // Remove remaining newline character
+                                        doc.integrate_deletion(deletion);
+                                    }
+                                }
                             }
+                            *is_dirty_lock.lock().await = true;
+
+                            let localhost =
+                                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
+                            if let Some(_) = &*server_thread_lock.lock().await {
+                                users_lock.lock().await.add_user(localhost, cursor_marker);
+                            }
+                            *is_moved_lock.lock().await = true;
                             Message::SessionStarted
                         });
                     }
+                    text_editor::Action::Click(_) => {
+                        // Check if the user is hosting a session
+                        if self.started_session {
+                            // Update the host user's cursor position in the users map
+                            let localhost =
+                                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
+                            let users_lock = self.users.clone();
+                            let is_moved_lock = self.is_moved.clone();
+                            let server_thread_lock = self.server_thread.clone();
+                            return Task::future(async move {
+                                if let Some(_) = &*server_thread_lock.lock().await {
+                                    users_lock.lock().await.add_user(localhost, cursor_marker);
+                                    *is_moved_lock.lock().await = true;
+                                }
+                                Message::SessionStarted
+                            });
+                        }
+
+                        // Otherwise, check if the user is connected to a session
+                        if let State::Connected(ref mut connection) = self.client_state {
+                            if self.joined_session {
+                                let cursor_data = serde_json::to_string(
+                                    &json!({ "y": line, "color": self.cursor_marker.color }),
+                                )
+                                .expect("Failed to serialize cursor data");
+                                let message = format!("Cursor: {}", cursor_data);
+
+                                // Send the message
+                                connection.send(client::Message::User(message));
+                            } else {
+                                println!("Cannot send message; not joined in a session.");
+                            }
+                        };
+                    }
                     _ => return Task::done(Message::NoOp),
                 }
-
-                // Translate edit action to document operations
-                return Task::future(async move {
-                    let mut doc = doc_lock.lock().await;
-
-                    let num_deleted = if let Some(s) = selection {
-                        // Find the selection in a slice of the content text
-                        let start = if s.len() > index { 0 } else { index - s.len() };
-                        let end = if index + s.len() > content_text.len() {
-                            content_text.len()
-                        } else {
-                            index + s.len()
-                        };
-
-                        let text_to_search = content_text.get(start..end).unwrap_or("");
-                        if let Some(i) = text_to_search.find(&s) {
-                            index = i + start;
-                            let deletion = doc.delete(index..(index + s.len()));
-                            doc.integrate_deletion(deletion);
-                            s.len()
-                        } else {
-                            // Selection not found
-                            0
-                        }
-                    } else {
-                        0
-                    };
-
-                    match action {
-                        text_editor::Action::Edit(edit) => match edit {
-                            text_editor::Edit::Insert(ch) => {
-                                let insertion = doc.insert(index, ch.to_string());
-                                doc.integrate_insertion(insertion);
-
-                                if is_blank_line && !doc.check_newline_at(index + 1) {
-                                    let insertion = doc.insert(index + 1, "\n"); // Insert newline after character
-                                    doc.integrate_insertion(insertion);
-                                }
-                            }
-                            text_editor::Edit::Paste(text) => {
-                                let insertion = doc.insert(index, text.to_string());
-                                doc.integrate_insertion(insertion);
-
-                                if is_blank_line && !doc.check_newline_at(index + text.len()) {
-                                    let insertion = doc.insert(index + text.len(), "\n"); // Insert newline after string
-                                    doc.integrate_insertion(insertion);
-                                }
-                            }
-                            text_editor::Edit::Enter => {
-                                let insertion = doc.insert(index, "\n");
-                                doc.integrate_insertion(insertion);
-                            }
-                            text_editor::Edit::Delete => {
-                                if num_deleted == 0 && doc.len() > index + 1 {
-                                    let deletion = doc.delete(index..(index + 1));
-                                    doc.integrate_deletion(deletion);
-                                }
-
-                                if doc.len() == 1 {
-                                    let deletion = doc.delete(0..1); // Remove remaining newline character
-                                    doc.integrate_deletion(deletion);
-                                }
-                            }
-                            text_editor::Edit::Backspace => {
-                                if num_deleted == 0 && doc.len() > 1 {
-                                    let deletion = doc.delete((index - 1)..index);
-                                    doc.integrate_deletion(deletion);
-                                }
-
-                                if doc.len() == 1 {
-                                    let deletion = doc.delete(0..1); // Remove remaining newline character
-                                    doc.integrate_deletion(deletion);
-                                }
-                            }
-                        },
-                        _ => {}
-                    }
-
-                    Message::NoOp
-                });
             }
             Message::Menu(menu_msg) => {
                 let _ = self.menubar.update(menu_msg.clone());
@@ -758,19 +806,27 @@ impl Editor {
             }
             Message::StartSessionPressed => {
                 let doc = self.document.clone();
+                let is_dirty_lock = self.is_dirty.clone();
                 let read_password = self.read_password.clone();
                 let edit_password = self.edit_password.clone();
                 let user_to_cursor_map = self.users.clone();
+                let is_moved_lock = self.is_moved.clone();
                 self.started_session = !self.started_session;
-
-                // TODO: Add host user to cursor map
                 let server_thread_lock = self.server_thread.clone();
                 return Task::future(async move {
                     let mut server_thread = server_thread_lock.lock().await;
                     *server_thread = Some(
-                        start_server(read_password, edit_password, doc, user_to_cursor_map).await,
+                        start_server(
+                            read_password,
+                            edit_password,
+                            doc,
+                            is_dirty_lock,
+                            user_to_cursor_map,
+                            is_moved_lock,
+                        )
+                        .await,
                     );
-                    Message::NoOp
+                    Message::SessionStarted
                 });
             }
             Message::SessionStarted => {
@@ -848,7 +904,10 @@ impl Editor {
                             let document_data = &message_text[document_start + 9..]; // Skip "Document:"
 
                             // Update the document content in the editor
-                            let parsed_content = document_data.trim().to_string();
+                            let doc =
+                                serde_json::from_str::<DocumentBroadcast>(document_data.trim())
+                                    .unwrap();
+                            let parsed_content = doc.text.to_string();
                             let editor_content = self.content.text().trim().to_string(); // Ensure both are strings
 
                             // Debug logs to inspect the content comparison
@@ -862,6 +921,16 @@ impl Editor {
                             };
                             self.content
                                 .perform(text_editor::Action::Drag(Point::new(x as f32, y as f32)));
+
+                            let doc_lock = self.document.clone();
+                            return Task::future(async move {
+                                *doc_lock.lock().await = Document {
+                                    buffer: parsed_content,
+                                    crdt: Replica::decode(1, &doc.replica).unwrap(),
+                                };
+
+                                Message::NoOp
+                            });
                         }
                     }
                 }

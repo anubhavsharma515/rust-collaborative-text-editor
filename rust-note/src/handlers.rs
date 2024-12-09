@@ -1,6 +1,6 @@
 use crate::{
     editor::CursorMarker,
-    server::{AppState, DeleteRequest, InsertRequest, Insertion},
+    server::{AppState, DeleteRequest, DocumentBroadcast, InsertRequest, Insertion},
 };
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
@@ -20,8 +20,6 @@ use futures::{
     stream::{SplitSink, StreamExt},
 };
 use std::{borrow::Cow, net::SocketAddr, ops::ControlFlow};
-
-const BROADCAST_INTERVAL: u64 = 300;
 
 pub async fn auth(
     state: State<AppState>,
@@ -98,7 +96,7 @@ async fn handle_read_socket(socket: WebSocket, who: SocketAddr, State(state): St
     let (sender, _) = socket.split();
 
     // Broadcast the content of the document to all clients
-    let mut send_task = tokio::spawn(broadcast(sender, state.clone()));
+    let mut send_task = tokio::spawn(broadcast(sender, who, state.clone()));
 
     // If any one of the tasks exit, abort the other.
     tokio::select! {
@@ -138,8 +136,8 @@ async fn handle_edit_socket(
 
     let (sender, mut receiver) = socket.split();
 
-    // Broadcast the content of the document to all clients
-    let mut send_task = tokio::spawn(broadcast(sender, state.clone()));
+    // Broadcast the content of the document to client
+    let mut send_task = tokio::spawn(broadcast(sender, who, state.clone()));
 
     // This second task will receive messages from client and print them on server console
     let mut recv_task = tokio::spawn(async move {
@@ -172,18 +170,28 @@ async fn handle_edit_socket(
     println!("Websocket context {who} destroyed");
 }
 
-async fn broadcast(mut sender: SplitSink<WebSocket, Message>, state: AppState) -> i32 {
+async fn broadcast(
+    mut sender: SplitSink<WebSocket, Message>,
+    who: SocketAddr,
+    state: AppState,
+) -> i32 {
     let mut n_msg = 0;
-    loop {
+    // Send the document and cursors to the client that just connected
+    // This is the first message that the client will receive
+    {
         let doc = state.document.lock().await;
+        let doc_json = serde_json::to_string(&DocumentBroadcast {
+            text: doc.buffer.clone(),
+            replica: Replica::encode(&doc.crdt),
+        })
+        .unwrap();
         if sender
-            .send(Message::Text(format!("Document: {}", doc.buffer)))
+            .send(Message::Text(format!("Document: {}", doc_json)))
             .await
             .is_err()
         {
-            break;
+            return n_msg;
         }
-        n_msg += 1;
 
         let users = state.users.lock().await;
         let users_json = serde_json::to_string(&*users).unwrap();
@@ -192,14 +200,52 @@ async fn broadcast(mut sender: SplitSink<WebSocket, Message>, state: AppState) -
             .await
             .is_err()
         {
-            break;
+            return n_msg;
         }
-        n_msg += 1;
 
-        tokio::time::sleep(std::time::Duration::from_millis(BROADCAST_INTERVAL)).await;
+        println!("New client connected, document and cursors sent to {who}");
+        n_msg += 2;
+
+        *state.is_dirty.lock().await = false;
+        *state.is_moved.lock().await = false;
     }
 
-    println!("Broadcasting close...");
+    loop {
+        if *state.is_dirty.lock().await {
+            let doc = state.document.lock().await;
+            let doc_json = serde_json::to_string(&DocumentBroadcast {
+                text: doc.buffer.clone(),
+                replica: Replica::encode(&doc.crdt),
+            })
+            .unwrap();
+            if sender
+                .send(Message::Text(format!("Document: {}", doc_json)))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            n_msg += 1;
+
+            *state.is_dirty.lock().await = false;
+        }
+
+        if *state.is_moved.lock().await {
+            let users = state.users.lock().await;
+            let users_json = serde_json::to_string(&*users).unwrap();
+            if sender
+                .send(Message::Text(format!("Users: {}", users_json)))
+                .await
+                .is_err()
+            {
+                break;
+            }
+            *state.is_moved.lock().await = false;
+            n_msg += 1;
+        }
+    }
+
+    println!("Channel closed...");
     if let Err(e) = sender
         .send(Message::Close(Some(CloseFrame {
             code: axum::extract::ws::close_code::NORMAL,
@@ -234,6 +280,7 @@ async fn process_message(
                                     text: insert.text,
                                     crdt: insertion,
                                 });
+                                *state.is_dirty.lock().await = true;
                             }
                         }
                         Err(e) => println!("Error parsing insert: {e}"),
@@ -247,6 +294,7 @@ async fn process_message(
                                 let mut fork = Replica::decode(id as u64, &delete.replica).unwrap();
                                 let deletion = fork.deleted(delete.range);
                                 state.document.lock().await.integrate_deletion(deletion);
+                                *state.is_dirty.lock().await = true;
                             }
                         }
                         Err(e) => println!("Error parsing delete: {e}"),
@@ -255,7 +303,10 @@ async fn process_message(
                 Some("Cursor") => {
                     let s = iter.collect::<Vec<&str>>().join(":");
                     match serde_json::from_str::<CursorMarker>(s.trim()) {
-                        Ok(cursor) => state.users.lock().await.add_user(who, cursor),
+                        Ok(cursor) => {
+                            state.users.lock().await.add_user(who, cursor);
+                            *state.is_moved.lock().await = true;
+                        }
                         Err(e) => println!("Error parsing cursor: {e}"),
                     }
                 }
