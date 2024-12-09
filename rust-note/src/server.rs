@@ -53,6 +53,10 @@ impl Users {
             .collect()
     }
 
+    pub fn remove_user(&mut self, socket_addr: SocketAddr) {
+        self.user_map.remove(&socket_addr);
+    }
+
     pub fn delete_all_users(&mut self) {
         self.user_map.clear();
     }
