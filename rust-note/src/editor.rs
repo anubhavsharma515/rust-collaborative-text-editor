@@ -1,37 +1,32 @@
-use crate::client;
-use crate::server::start_server;
-use crate::server::Document;
-use crate::server::DocumentBroadcast;
-use crate::server::InsertRequest;
-use crate::server::Users;
-use crate::widgets;
-use cola::Replica;
-use futures::channel::mpsc;
-use futures::SinkExt;
-use futures::Stream;
-use iced::keyboard;
-use iced::mouse;
-use iced::stream;
-use iced::widget::canvas::{self, Canvas, Frame, Path as icedPath};
-use iced::widget::{
-    button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
-    scrollable, stack, text, text_editor, text_input, toggler, Container, Stack, Text, TextEditor,
+use crate::{
+    client,
+    server::{start_server, DeleteRequest, Document, DocumentBroadcast, InsertRequest, Users},
+    widgets,
 };
-use iced::Subscription;
-use iced::{highlighter, Color};
-use iced::{window, Pixels};
-use iced::{Alignment, Element, Length, Task, Theme};
-use iced::{Point, Rectangle, Renderer, Size};
+use cola::Replica;
+use futures::{channel::mpsc, SinkExt, Stream};
+use iced::{
+    highlighter, keyboard, mouse, stream,
+    widget::canvas::{self, Frame, Path as icedPath},
+    widget::{
+        button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
+        scrollable, stack, text, text_editor, text_input, toggler, Canvas, Container, Stack, Text,
+        TextEditor,
+    },
+    window, Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size,
+    Subscription, Task, Theme,
+};
 use iced_aw::{TabLabel, Tabs};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::ffi;
-use std::net::IpAddr;
-use std::net::Ipv4Addr;
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{
+    ffi,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    ops::Range,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
@@ -561,8 +556,7 @@ impl Editor {
                     running_sum_vec.push(running_sum);
                 });
 
-                let mut connection = if let State::Connected(ref mut connection) = self.client_state
-                {
+                let connection = if let State::Connected(ref mut connection) = self.client_state {
                     Some(connection.clone())
                 } else {
                     None
@@ -618,7 +612,6 @@ impl Editor {
                                         text.push_str("\n"); // Insert newline after character
                                     }
 
-                                    // TODO: Send the insertion request json along the socket to the server
                                     let insertion_req = InsertRequest {
                                         insert_at: index,
                                         text: text.clone(),
@@ -643,16 +636,20 @@ impl Editor {
                                         text.push_str("\n"); // Insert newline after string
                                     }
 
-                                    // TODO: Send the insertion request json along the socket to the server
-                                    // let insertion_req = InsertRequest {
-                                    //     insert_at: index,
-                                    //     text: text.clone(),
-                                    //     replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    // };
-                                    // let insertion_req_json =
-                                    //     serde_json::to_string(&insertion_req).unwrap();
+                                    let insertion_req = InsertRequest {
+                                        insert_at: index,
+                                        text: text.clone(),
+                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    };
+                                    let insertion_req_json =
+                                        serde_json::to_string(&insertion_req).unwrap();
 
-                                    // connection.send(client::Message::User(insertion_req_json));
+                                    if connection.is_some() {
+                                        println!("Sending insertion request...");
+                                        connection
+                                            .unwrap()
+                                            .send(client::Message::User(insertion_req_json));
+                                    }
 
                                     let insertion = doc.insert(index, text);
                                     doc.integrate_insertion(insertion);
@@ -660,19 +657,43 @@ impl Editor {
                                 text_editor::Edit::Enter => {
                                     let text = String::from("\n");
 
-                                    // TODO: Send the insertion request json along the socket to the server
-                                    // let insertion_req = InsertRequest {
-                                    //     insert_at: index,
-                                    //     text: text.clone(),
-                                    //     replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    // };
-                                    // let insertion_req_json =
-                                    //     serde_json::to_string(&insertion_req).unwrap();
+                                    let insertion_req = InsertRequest {
+                                        insert_at: index,
+                                        text: text.clone(),
+                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    };
+                                    let insertion_req_json =
+                                        serde_json::to_string(&insertion_req).unwrap();
+
+                                    if connection.is_some() {
+                                        println!("Sending insertion request...");
+                                        connection
+                                            .unwrap()
+                                            .send(client::Message::User(insertion_req_json));
+                                    }
 
                                     let insertion = doc.insert(index, text);
                                     doc.integrate_insertion(insertion);
                                 }
                                 text_editor::Edit::Delete => {
+                                    let deletion_request = DeleteRequest {
+                                        range: Range {
+                                            start: index,
+                                            end: index + 1,
+                                        },
+                                        document_text: doc.buffer.clone(),
+                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    };
+                                    let deletion_request_json =
+                                        serde_json::to_string(&deletion_request).unwrap();
+
+                                    if connection.is_some() {
+                                        println!("Sending deletion request...");
+                                        connection
+                                            .unwrap()
+                                            .send(client::Message::User(deletion_request_json));
+                                    }
+
                                     if num_deleted == 0 && doc.len() > index + 1 {
                                         let deletion = doc.delete(index..(index + 1));
                                         doc.integrate_deletion(deletion);
@@ -684,6 +705,24 @@ impl Editor {
                                     }
                                 }
                                 text_editor::Edit::Backspace => {
+                                    let deletion_request = DeleteRequest {
+                                        range: Range {
+                                            start: index - 1,
+                                            end: index,
+                                        },
+                                        document_text: doc.buffer.clone(),
+                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    };
+                                    let deletion_request_json =
+                                        serde_json::to_string(&deletion_request).unwrap();
+
+                                    if connection.is_some() {
+                                        println!("Sending deletion request...");
+                                        connection
+                                            .unwrap()
+                                            .send(client::Message::User(deletion_request_json));
+                                    }
+
                                     if num_deleted == 0 && doc.len() > 1 {
                                         let deletion = doc.delete((index - 1)..index);
                                         doc.integrate_deletion(deletion);
