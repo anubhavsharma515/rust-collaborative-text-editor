@@ -553,6 +553,13 @@ impl Editor {
                     running_sum_vec.push(running_sum);
                 });
 
+                let mut connection = if let State::Connected(ref mut connection) = self.client_state
+                {
+                    Some(connection.clone())
+                } else {
+                    None
+                };
+
                 let content_text = self.content.text();
                 let mut index = running_sum_vec.get(x).unwrap().clone() + y;
 
@@ -609,14 +616,20 @@ impl Editor {
                                     }
 
                                     // TODO: Send the insertion request json along the socket to the server
-                                    // let insertion_req = InsertRequest {
-                                    //     insert_at: index,
-                                    //     text: text.clone(),
-                                    //     replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    // };
-                                    // let insertion_req_json =
-                                    //     serde_json::to_string(&insertion_req).unwrap();
+                                    let insertion_req = InsertRequest {
+                                        insert_at: index,
+                                        text: text.clone(),
+                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
+                                    };
+                                    let insertion_req_json =
+                                        serde_json::to_string(&insertion_req).unwrap();
 
+                                    if connection.is_some() {
+                                        println!("Sending insertion request...");
+                                        connection
+                                            .unwrap()
+                                            .send(client::Message::User(insertion_req_json));
+                                    }
                                     let insertion = doc.insert(index, text);
                                     doc.integrate_insertion(insertion);
                                 }
@@ -635,6 +648,8 @@ impl Editor {
                                     // };
                                     // let insertion_req_json =
                                     //     serde_json::to_string(&insertion_req).unwrap();
+
+                                    // connection.send(client::Message::User(insertion_req_json));
 
                                     let insertion = doc.insert(index, text);
                                     doc.integrate_insertion(insertion);
