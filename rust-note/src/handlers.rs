@@ -17,7 +17,7 @@ use axum_extra::TypedHeader;
 use cola::Replica;
 use futures::{
     sink::SinkExt,
-    stream::{SplitSink, StreamExt},
+    stream::{SplitSink, SplitStream, StreamExt},
 };
 use std::{borrow::Cow, net::SocketAddr, ops::ControlFlow};
 
@@ -125,8 +125,14 @@ async fn handle_edit_socket(
 
     if let Some(msg) = socket.recv().await {
         if let Ok(msg) = msg {
-            if process_message(msg, who, &mut state).await.is_break() {
-                return;
+            match msg {
+                Message::Pong(v) => {
+                    println!(">>> {who} sent pong with {v:?}");
+                }
+                _ => {
+                    println!("client {who} did not pong my ping");
+                    return;
+                }
             }
         } else {
             println!("client {who} abruptly disconnected");
@@ -134,23 +140,13 @@ async fn handle_edit_socket(
         }
     }
 
-    let (sender, mut receiver) = socket.split();
+    let (sender, receiver) = socket.split();
 
     // Broadcast the content of the document to client
     let mut send_task = tokio::spawn(broadcast(sender, who, state.clone()));
 
-    // This second task will receive messages from client and print them on server console
-    let mut recv_task = tokio::spawn(async move {
-        let mut cnt = 0;
-        while let Some(Ok(msg)) = receiver.next().await {
-            cnt += 1;
-
-            if process_message(msg, who, &mut state).await.is_break() {
-                break;
-            }
-        }
-        cnt
-    });
+    // This second task will receive messages from client
+    let mut recv_task = tokio::spawn(process_message(receiver, who, state.clone()));
 
     tokio::select! {
         rv_a = (&mut send_task) => {
@@ -168,6 +164,17 @@ async fn handle_edit_socket(
     }
 
     println!("Websocket context {who} destroyed");
+    // Remove user from the list of users
+    let mut users = state.users.lock().await;
+    users.remove_user(who);
+    *state.is_moved.lock().await = true;
+
+    let cursors = users.get_all_cursors();
+    state
+        .server_worker
+        .send(crate::editor::Input::Cursors(cursors))
+        .await
+        .unwrap();
 }
 
 async fn broadcast(
@@ -259,81 +266,108 @@ async fn broadcast(
 }
 
 async fn process_message(
-    msg: Message,
+    mut receiver: SplitStream<WebSocket>,
     who: SocketAddr,
-    state: &mut AppState,
-) -> ControlFlow<(), ()> {
-    match msg {
-        Message::Text(t) => {
-            println!(">>> {who} sent str: {t:?}");
-            let parts: Vec<&str> = t.split(":").collect();
-            let mut iter = parts.into_iter();
-            match iter.next() {
-                Some("Insert") => {
-                    let s = iter.collect::<Vec<&str>>().join(":");
-                    match serde_json::from_str::<InsertRequest>(s.trim()) {
-                        Ok(insert) => {
-                            if let Some(id) = state.users.lock().await.get_id(who) {
-                                let mut fork = Replica::decode(id as u64, &insert.replica).unwrap();
-                                let insertion = fork.inserted(insert.insert_at, insert.text.len());
-                                state.document.lock().await.integrate_insertion(Insertion {
-                                    text: insert.text,
-                                    crdt: insertion,
-                                });
-                                *state.is_dirty.lock().await = true;
-                            }
-                        }
-                        Err(e) => println!("Error parsing insert: {e}"),
-                    }
-                }
-                Some("Delete") => {
-                    let s = iter.collect::<Vec<&str>>().join(":");
-                    match serde_json::from_str::<DeleteRequest>(s.trim()) {
-                        Ok(delete) => {
-                            if let Some(id) = state.users.lock().await.get_id(who) {
-                                let mut fork = Replica::decode(id as u64, &delete.replica).unwrap();
-                                let deletion = fork.deleted(delete.range);
-                                state.document.lock().await.integrate_deletion(deletion);
-                                *state.is_dirty.lock().await = true;
-                            }
-                        }
-                        Err(e) => println!("Error parsing delete: {e}"),
-                    }
-                }
-                Some("Cursor") => {
-                    let s = iter.collect::<Vec<&str>>().join(":");
-                    match serde_json::from_str::<CursorMarker>(s.trim()) {
-                        Ok(cursor) => {
-                            state.users.lock().await.add_user(who, cursor);
-                            *state.is_moved.lock().await = true;
-                        }
-                        Err(e) => println!("Error parsing cursor: {e}"),
-                    }
-                }
-                _ => {}
-            }
-        }
-        Message::Binary(d) => {
-            println!(">>> {} sent {} bytes: {:?}", who, d.len(), d);
-        }
-        Message::Close(c) => {
-            if let Some(cf) = c {
-                println!(
-                    ">>> {} sent close with code {} and reason `{}`",
-                    who, cf.code, cf.reason
-                );
-            } else {
-                println!(">>> {who} somehow sent close message without CloseFrame");
-            }
-            return ControlFlow::Break(());
-        }
+    mut state: AppState,
+) -> i32 {
+    let mut n_msg = 0;
+    while let Some(Ok(msg)) = receiver.next().await {
+        n_msg += 1;
 
-        Message::Pong(v) => {
-            println!(">>> {who} sent pong with {v:?}");
-        }
-        Message::Ping(v) => {
-            println!(">>> {who} sent ping with {v:?}");
+        match msg {
+            Message::Text(t) => {
+                println!(">>> {who} sent str: {t:?}");
+                let parts: Vec<&str> = t.split(":").collect();
+                let mut iter = parts.into_iter();
+                match iter.next() {
+                    Some("Insert") => {
+                        let s = iter.collect::<Vec<&str>>().join(":");
+                        match serde_json::from_str::<InsertRequest>(s.trim()) {
+                            Ok(insert) => {
+                                if let Some(id) = state.users.lock().await.get_id(who) {
+                                    let mut fork =
+                                        Replica::decode(id as u64, &insert.replica).unwrap();
+                                    let insertion =
+                                        fork.inserted(insert.insert_at, insert.text.len());
+                                    state.document.lock().await.integrate_insertion(Insertion {
+                                        text: insert.text,
+                                        crdt: insertion,
+                                    });
+                                    *state.is_dirty.lock().await = true;
+                                    state
+                                        .server_worker
+                                        .send(crate::editor::Input::Edit)
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+                            Err(e) => println!("Error parsing insert: {e}"),
+                        }
+                    }
+                    Some("Delete") => {
+                        let s = iter.collect::<Vec<&str>>().join(":");
+                        match serde_json::from_str::<DeleteRequest>(s.trim()) {
+                            Ok(delete) => {
+                                if let Some(id) = state.users.lock().await.get_id(who) {
+                                    let mut fork =
+                                        Replica::decode(id as u64, &delete.replica).unwrap();
+                                    let deletion = fork.deleted(delete.range);
+                                    state.document.lock().await.integrate_deletion(deletion);
+                                    *state.is_dirty.lock().await = true;
+                                    state
+                                        .server_worker
+                                        .send(crate::editor::Input::Edit)
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+                            Err(e) => println!("Error parsing delete: {e}"),
+                        }
+                    }
+                    Some("Cursor") => {
+                        let s = iter.collect::<Vec<&str>>().join(":");
+                        match serde_json::from_str::<CursorMarker>(s.trim()) {
+                            Ok(cursor) => {
+                                let mut users = state.users.lock().await;
+                                users.add_user(who, cursor);
+                                *state.is_moved.lock().await = true;
+
+                                let cursors = users.get_all_cursors();
+                                state
+                                    .server_worker
+                                    .send(crate::editor::Input::Cursors(cursors))
+                                    .await
+                                    .unwrap();
+                            }
+                            Err(e) => println!("Error parsing cursor: {e}"),
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Message::Binary(d) => {
+                println!(">>> {} sent {} bytes: {:?}", who, d.len(), d);
+            }
+            Message::Close(c) => {
+                if let Some(cf) = c {
+                    println!(
+                        ">>> {} sent close with code {} and reason `{}`",
+                        who, cf.code, cf.reason
+                    );
+                } else {
+                    println!(">>> {who} somehow sent close message without CloseFrame");
+                }
+                break;
+            }
+
+            Message::Pong(v) => {
+                println!(">>> {who} sent pong with {v:?}");
+            }
+            Message::Ping(v) => {
+                println!(">>> {who} sent ping with {v:?}");
+            }
         }
     }
-    ControlFlow::Continue(())
+
+    n_msg
 }

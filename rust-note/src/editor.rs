@@ -6,8 +6,12 @@ use crate::server::InsertRequest;
 use crate::server::Users;
 use crate::widgets;
 use cola::Replica;
+use futures::channel::mpsc;
+use futures::SinkExt;
+use futures::Stream;
 use iced::keyboard;
 use iced::mouse;
+use iced::stream;
 use iced::widget::canvas::{self, Canvas, Frame, Path as icedPath};
 use iced::widget::{
     button, center, column, container, horizontal_space, markdown, mouse_area, opaque, row,
@@ -118,6 +122,7 @@ pub struct Editor {
     joined_session: bool,
     started_session: bool,
     client_state: State,
+    server_worker: Option<mpsc::Sender<Input>>,
 }
 
 enum State {
@@ -143,12 +148,13 @@ pub enum Message {
     ReadPasswordChanged(String),
     FilePathChanged(String),
     StartSessionPressed,
-    SessionStarted,
+    UpdateCursors(Vec<CursorMarker>),
     JoinSessionPressed,
     TabSelected(TabId),
     Echo(client::Event),
     RequestClose(iced::window::Id),
     CloseWindow(iced::window::Id),
+    WorkerReady(mpsc::Sender<Input>),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -236,6 +242,7 @@ impl Editor {
                 read_password: None,
                 edit_password: None,
                 client_state: State::Disconnected,
+                server_worker: None,
             },
             Task::none(),
         )
@@ -256,6 +263,7 @@ impl Editor {
             } else {
                 Subscription::none()
             },
+            Subscription::run(server_worker),
         ];
 
         Subscription::batch(subscriptions)
@@ -568,20 +576,15 @@ impl Editor {
                 let selection = self.content.selection().clone();
 
                 self.content.perform(action.clone());
-                let line = self.cursor_position_in_pixels();
-                self.cursor_marker.move_cursor(line);
-                let cursor_marker = self.cursor_marker.clone();
 
                 // Update markdown preview with the editor's text content
                 self.markdown_text = markdown::parse(&self.content.text()).collect();
 
-                match action.clone() {
+                let mut tasks = Vec::new();
+                match action {
                     text_editor::Action::Edit(edit) => {
-                        let users_lock = self.users.clone();
-                        let server_thread_lock = self.server_thread.clone();
-                        let is_moved_lock = self.is_moved.clone();
                         // Translate local user edit action to document operations
-                        return Task::future(async move {
+                        tasks.push(Task::future(async move {
                             let mut doc = doc_lock.lock().await;
 
                             let num_deleted = if let Some(s) = selection {
@@ -694,51 +697,47 @@ impl Editor {
                             }
                             *is_dirty_lock.lock().await = true;
 
-                            let localhost =
-                                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
-                            if let Some(_) = &*server_thread_lock.lock().await {
-                                users_lock.lock().await.add_user(localhost, cursor_marker);
-                            }
-                            *is_moved_lock.lock().await = true;
-                            Message::SessionStarted
-                        });
+                            Message::NoOp
+                        }));
                     }
-                    text_editor::Action::Click(_) => {
-                        // Check if the user is hosting a session
-                        if self.started_session {
-                            // Update the host user's cursor position in the users map
-                            let localhost =
-                                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
-                            let users_lock = self.users.clone();
-                            let is_moved_lock = self.is_moved.clone();
-                            let server_thread_lock = self.server_thread.clone();
-                            return Task::future(async move {
-                                if let Some(_) = &*server_thread_lock.lock().await {
-                                    users_lock.lock().await.add_user(localhost, cursor_marker);
-                                    *is_moved_lock.lock().await = true;
-                                }
-                                Message::SessionStarted
-                            });
-                        }
-
-                        // Otherwise, check if the user is connected to a session
-                        if let State::Connected(ref mut connection) = self.client_state {
-                            if self.joined_session {
-                                let cursor_data = serde_json::to_string(
-                                    &json!({ "y": line, "color": self.cursor_marker.color }),
-                                )
-                                .expect("Failed to serialize cursor data");
-                                let message = format!("Cursor: {}", cursor_data);
-
-                                // Send the message
-                                connection.send(client::Message::User(message));
-                            } else {
-                                println!("Cannot send message; not joined in a session.");
-                            }
-                        };
-                    }
-                    _ => return Task::done(Message::NoOp),
+                    _ => tasks.push(Task::done(Message::NoOp)),
                 }
+
+                // Update cursor positions
+                let line = self.cursor_position_in_pixels();
+                self.cursor_marker.move_cursor(line);
+                let cursor_marker = self.cursor_marker.clone();
+
+                // Check if the user is connected to a session
+                if let State::Connected(ref mut connection) = self.client_state {
+                    if self.joined_session {
+                        let cursor_data = serde_json::to_string(
+                            &json!({ "y": line, "color": self.cursor_marker.color }),
+                        )
+                        .expect("Failed to serialize cursor data");
+                        let message = format!("Cursor: {}", cursor_data);
+
+                        // Send the message
+                        connection.send(client::Message::User(message));
+                    } else {
+                        println!("Cannot send message; not joined in a session.");
+                    }
+                } else {
+                    // If not, user is the host so update cursor position in the users map and user cursors list
+                    let localhost = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080);
+                    let users_lock = self.users.clone();
+                    let is_moved_lock = self.is_moved.clone();
+                    tasks.push(Task::future(async move {
+                        let mut users = users_lock.lock().await;
+                        users.add_user(localhost, cursor_marker);
+                        *is_moved_lock.lock().await = true;
+
+                        let cursors = users.get_all_cursors();
+                        Message::UpdateCursors(cursors)
+                    }));
+                }
+
+                return Task::batch(tasks);
             }
             Message::Menu(menu_msg) => {
                 let _ = self.menubar.update(menu_msg.clone());
@@ -820,14 +819,20 @@ impl Editor {
                 self.markdown_preview_open = toggled;
             }
             Message::StartSessionPressed => {
+                // Verify that a server worker has been created
+                if self.server_worker.is_none() {
+                    return Task::done(Message::NoOp);
+                }
+
                 let doc = self.document.clone();
                 let is_dirty_lock = self.is_dirty.clone();
                 let read_password = self.read_password.clone();
                 let edit_password = self.edit_password.clone();
-                let user_to_cursor_map = self.users.clone();
+                let users_lock = self.users.clone();
                 let is_moved_lock = self.is_moved.clone();
                 self.started_session = !self.started_session;
                 let server_thread_lock = self.server_thread.clone();
+                let server_worker = self.server_worker.clone().unwrap();
                 return Task::future(async move {
                     let mut server_thread = server_thread_lock.lock().await;
                     *server_thread = Some(
@@ -836,32 +841,17 @@ impl Editor {
                             edit_password,
                             doc,
                             is_dirty_lock,
-                            user_to_cursor_map,
+                            users_lock,
                             is_moved_lock,
+                            server_worker,
                         )
                         .await,
                     );
-                    Message::SessionStarted
+                    Message::NoOp
                 });
             }
-            Message::SessionStarted => {
-                let users_lock = self.users.clone();
-                self.user_cursors = {
-                    let users_lock = users_lock.clone();
-
-                    // Spawn a new thread to run the async code
-                    let handle = std::thread::spawn(move || {
-                        // Create a new runtime inside the thread
-                        let rt = tokio::runtime::Runtime::new().unwrap();
-                        rt.block_on(async {
-                            let users = users_lock.lock().await;
-                            users.get_all_cursors()
-                        })
-                    });
-
-                    // Wait for the thread to finish and get the result
-                    handle.join().unwrap()
-                };
+            Message::UpdateCursors(cursors) => {
+                self.user_cursors = cursors;
             }
             Message::Echo(event) => match event {
                 client::Event::Connected(connection) => {
@@ -1001,6 +991,9 @@ impl Editor {
                 println!("Window with id {:?} closed", id);
                 return window::close::<iced::window::Id>(id).map(|_| Message::NoOp);
             }
+            Message::WorkerReady(sender) => {
+                self.server_worker = Some(sender);
+            }
         }
         Task::none()
     }
@@ -1111,4 +1104,33 @@ where
         )
     ]
     .into()
+}
+
+pub enum Input {
+    Cursors(Vec<CursorMarker>),
+    Edit,
+}
+
+fn server_worker() -> impl Stream<Item = Message> {
+    stream::channel(100, |mut output| async move {
+        // Create channel
+        let (sender, mut receiver) = mpsc::channel(100);
+
+        // Send the sender back to the application
+        output.send(Message::WorkerReady(sender)).await.unwrap();
+
+        loop {
+            use iced_futures::futures::StreamExt;
+
+            // Read next input sent from `Application`
+            let input = receiver.select_next_some().await;
+
+            match input {
+                Input::Cursors(cursors) => {
+                    output.send(Message::UpdateCursors(cursors)).await.unwrap();
+                }
+                _ => {}
+            }
+        }
+    })
 }

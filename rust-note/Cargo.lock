@@ -3586,6 +3586,7 @@ dependencies = [
  "headers",
  "iced",
  "iced_aw",
+ "iced_futures",
  "rand",
  "rand_core",
  "rfd",
