@@ -1,5 +1,5 @@
 use crate::{
-    editor::CursorMarker,
+    editor::{CursorMarker, Input},
     handlers::{auth, ws_handler},
 };
 use argon2::{
@@ -8,6 +8,7 @@ use argon2::{
 };
 use axum::{middleware, routing::get, Router};
 use cola::{Deletion, EncodedReplica, Replica, ReplicaId};
+use futures::channel::mpsc;
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, ops::Range, sync::Arc};
@@ -147,6 +148,7 @@ pub struct AppState {
     pub is_dirty: Arc<Mutex<bool>>,
     pub users: Arc<Mutex<Users>>,
     pub is_moved: Arc<Mutex<bool>>,
+    pub server_worker: mpsc::Sender<Input>,
 }
 
 pub async fn start_server(
@@ -156,6 +158,7 @@ pub async fn start_server(
     is_dirty: Arc<Mutex<bool>>,
     users: Arc<Mutex<Users>>,
     is_moved: Arc<Mutex<bool>>,
+    server_worker: mpsc::Sender<Input>,
 ) -> JoinHandle<()> {
     let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
     let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
@@ -166,6 +169,7 @@ pub async fn start_server(
         is_dirty,
         users,
         is_moved,
+        server_worker,
     };
 
     let app = Router::new()

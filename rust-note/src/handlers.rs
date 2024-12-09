@@ -281,6 +281,11 @@ async fn process_message(
                                     crdt: insertion,
                                 });
                                 *state.is_dirty.lock().await = true;
+                                state
+                                    .server_worker
+                                    .send(crate::editor::Input::Edit)
+                                    .await
+                                    .unwrap();
                             }
                         }
                         Err(e) => println!("Error parsing insert: {e}"),
@@ -295,6 +300,11 @@ async fn process_message(
                                 let deletion = fork.deleted(delete.range);
                                 state.document.lock().await.integrate_deletion(deletion);
                                 *state.is_dirty.lock().await = true;
+                                state
+                                    .server_worker
+                                    .send(crate::editor::Input::Edit)
+                                    .await
+                                    .unwrap();
                             }
                         }
                         Err(e) => println!("Error parsing delete: {e}"),
@@ -304,8 +314,16 @@ async fn process_message(
                     let s = iter.collect::<Vec<&str>>().join(":");
                     match serde_json::from_str::<CursorMarker>(s.trim()) {
                         Ok(cursor) => {
-                            state.users.lock().await.add_user(who, cursor);
+                            let mut users = state.users.lock().await;
+                            users.add_user(who, cursor);
                             *state.is_moved.lock().await = true;
+
+                            let cursors = users.get_all_cursors();
+                            state
+                                .server_worker
+                                .send(crate::editor::Input::Cursors(cursors))
+                                .await
+                                .unwrap();
                         }
                         Err(e) => println!("Error parsing cursor: {e}"),
                     }
