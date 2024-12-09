@@ -1,6 +1,6 @@
 use crate::{
     client,
-    server::{start_server, DeleteRequest, Document, DocumentBroadcast, InsertRequest, Users},
+    server::{start_server, Document, DocumentTransmit, Operation, Users},
     widgets,
 };
 use cola::Replica;
@@ -118,6 +118,7 @@ pub struct Editor {
     started_session: bool,
     client_state: State,
     server_worker: Option<mpsc::Sender<Input>>,
+    operations: Arc<Mutex<Vec<Operation>>>,
 }
 
 enum State {
@@ -143,6 +144,7 @@ pub enum Message {
     ReadPasswordChanged(String),
     FilePathChanged(String),
     StartSessionPressed,
+    UpdateDoc(Operation),
     UpdateCursors(Vec<CursorMarker>),
     JoinSessionPressed,
     TabSelected(TabId),
@@ -239,6 +241,7 @@ impl Editor {
                 edit_password: None,
                 client_state: State::Disconnected,
                 server_worker: None,
+                operations: Arc::new(Mutex::new(Vec::new())),
             },
             Task::none(),
         )
@@ -570,7 +573,8 @@ impl Editor {
                     running_sum_vec.push(running_sum);
                 });
 
-                let connection = if let State::Connected(ref mut connection) = self.client_state {
+                let mut connection = if let State::Connected(ref mut connection) = self.client_state
+                {
                     Some(connection.clone())
                 } else {
                     None
@@ -581,6 +585,7 @@ impl Editor {
 
                 let doc_lock = self.document.clone();
                 let is_dirty_lock = self.is_dirty.clone();
+                let operations_lock = self.operations.clone();
                 let selection = self.content.selection().clone();
 
                 self.content.perform(action.clone());
@@ -593,6 +598,7 @@ impl Editor {
                     text_editor::Action::Edit(edit) => {
                         // Translate local user edit action to document operations
                         tasks.push(Task::future(async move {
+                            let mut operations = operations_lock.lock().await;
                             let mut doc = doc_lock.lock().await;
 
                             let num_deleted = if let Some(s) = selection {
@@ -608,7 +614,9 @@ impl Editor {
                                 if let Some(i) = text_to_search.find(&s) {
                                     index = i + start;
                                     let deletion = doc.delete(index..(index + s.len()));
-                                    doc.integrate_deletion(deletion);
+                                    doc.integrate_deletion(deletion.clone());
+                                    operations.push(Operation::Delete(deletion));
+
                                     s.len()
                                 } else {
                                     // Selection not found
@@ -626,22 +634,9 @@ impl Editor {
                                         text.push_str("\n"); // Insert newline after character
                                     }
 
-                                    let insertion_req = InsertRequest {
-                                        insert_at: index,
-                                        text: text.clone(),
-                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    };
-                                    let insertion_req_json =
-                                        serde_json::to_string(&insertion_req).unwrap();
-
-                                    if connection.is_some() {
-                                        println!("Sending insertion request...");
-                                        connection
-                                            .unwrap()
-                                            .send(client::Message::User(insertion_req_json));
-                                    }
-                                    let insertion = doc.insert(index, text);
-                                    doc.integrate_insertion(insertion);
+                                    let insertion = doc.insert(index, text.clone());
+                                    doc.integrate_insertion(insertion.clone());
+                                    operations.push(Operation::Insert(insertion));
                                 }
                                 text_editor::Edit::Paste(text) => {
                                     let mut text = text.to_string();
@@ -650,106 +645,66 @@ impl Editor {
                                         text.push_str("\n"); // Insert newline after string
                                     }
 
-                                    let insertion_req = InsertRequest {
-                                        insert_at: index,
-                                        text: text.clone(),
-                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    };
-                                    let insertion_req_json =
-                                        serde_json::to_string(&insertion_req).unwrap();
-
-                                    if connection.is_some() {
-                                        println!("Sending insertion request...");
-                                        connection
-                                            .unwrap()
-                                            .send(client::Message::User(insertion_req_json));
-                                    }
-
                                     let insertion = doc.insert(index, text);
-                                    doc.integrate_insertion(insertion);
+                                    doc.integrate_insertion(insertion.clone());
+                                    operations.push(Operation::Insert(insertion));
                                 }
                                 text_editor::Edit::Enter => {
                                     let text = String::from("\n");
 
-                                    let insertion_req = InsertRequest {
-                                        insert_at: index,
-                                        text: text.clone(),
-                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    };
-                                    let insertion_req_json =
-                                        serde_json::to_string(&insertion_req).unwrap();
-
-                                    if connection.is_some() {
-                                        println!("Sending insertion request...");
-                                        connection
-                                            .unwrap()
-                                            .send(client::Message::User(insertion_req_json));
-                                    }
-
                                     let insertion = doc.insert(index, text);
-                                    doc.integrate_insertion(insertion);
+                                    doc.integrate_insertion(insertion.clone());
+                                    operations.push(Operation::Insert(insertion));
                                 }
                                 text_editor::Edit::Delete => {
-                                    let deletion_request = DeleteRequest {
-                                        range: Range {
-                                            start: index,
-                                            end: index + 1,
-                                        },
-                                        document_text: doc.buffer.clone(),
-                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    };
-                                    let deletion_request_json =
-                                        serde_json::to_string(&deletion_request).unwrap();
-
-                                    if connection.is_some() {
-                                        println!("Sending deletion request...");
-                                        connection
-                                            .unwrap()
-                                            .send(client::Message::User(deletion_request_json));
-                                    }
-
                                     if num_deleted == 0 && doc.len() > index + 1 {
                                         let deletion = doc.delete(index..(index + 1));
-                                        doc.integrate_deletion(deletion);
+                                        doc.integrate_deletion(deletion.clone());
+                                        operations.push(Operation::Delete(deletion));
                                     }
 
                                     if doc.len() == 1 {
                                         let deletion = doc.delete(0..1); // Remove remaining newline character
-                                        doc.integrate_deletion(deletion);
+                                        doc.integrate_deletion(deletion.clone());
+                                        operations.push(Operation::Delete(deletion));
                                     }
                                 }
                                 text_editor::Edit::Backspace => {
-                                    let deletion_request = DeleteRequest {
-                                        range: Range {
-                                            start: index - 1,
-                                            end: index,
-                                        },
-                                        document_text: doc.buffer.clone(),
-                                        replica: Replica::encode(&doc.fork(doc.crdt.id() + 1).crdt),
-                                    };
-                                    let deletion_request_json =
-                                        serde_json::to_string(&deletion_request).unwrap();
-
-                                    if connection.is_some() {
-                                        println!("Sending deletion request...");
-                                        connection
-                                            .unwrap()
-                                            .send(client::Message::User(deletion_request_json));
-                                    }
-
                                     if num_deleted == 0 && doc.len() > 1 {
                                         let deletion = doc.delete((index - 1)..index);
-                                        doc.integrate_deletion(deletion);
+                                        doc.integrate_deletion(deletion.clone());
+                                        operations.push(Operation::Delete(deletion));
                                     }
 
                                     if doc.len() == 1 {
                                         let deletion = doc.delete(0..1); // Remove remaining newline character
-                                        doc.integrate_deletion(deletion);
+                                        doc.integrate_deletion(deletion.clone());
+                                        operations.push(Operation::Delete(deletion));
+                                    }
+                                }
+                            }
+
+                            for op in operations.iter() {
+                                if let Some(conn) = connection.as_mut() {
+                                    println!("Sending edit request...");
+                                    match op {
+                                        Operation::Insert(insertion) => {
+                                            conn.send(client::Message::User(format!(
+                                                "Insert: {}",
+                                                serde_json::to_string(insertion).unwrap()
+                                            )));
+                                        }
+                                        Operation::Delete(deletion) => {
+                                            conn.send(client::Message::User(format!(
+                                                "Delete: {}",
+                                                serde_json::to_string(deletion).unwrap()
+                                            )));
+                                        }
                                     }
                                 }
                             }
                             *is_dirty_lock.lock().await = true;
-
+                            dbg!(&doc.buffer);
                             Message::NoOp
                         }));
                     }
@@ -782,7 +737,7 @@ impl Editor {
                     let is_moved_lock = self.is_moved.clone();
                     tasks.push(Task::future(async move {
                         let mut users = users_lock.lock().await;
-                        users.add_user(localhost, cursor_marker);
+                        users.add_user(localhost, Some(cursor_marker));
                         *is_moved_lock.lock().await = true;
 
                         let cursors = users.get_all_cursors();
@@ -888,6 +843,7 @@ impl Editor {
                 let is_moved_lock = self.is_moved.clone();
                 let server_thread_lock = self.server_thread.clone();
                 let server_worker = self.server_worker.clone().unwrap();
+                let operations_lock = self.operations.clone();
                 return Task::future(async move {
                     let mut server_thread = server_thread_lock.lock().await;
                     *server_thread = Some(
@@ -899,11 +855,32 @@ impl Editor {
                             users_lock,
                             is_moved_lock,
                             server_worker,
+                            operations_lock,
                         )
                         .await,
                     );
                     Message::NoOp
                 });
+            }
+            Message::UpdateDoc(operation) => {
+                dbg!(&operation);
+                let doc_lock = self.document.clone();
+                let text = {
+                    // Spawn a new thread to run the async code
+                    let handle = std::thread::spawn(move || {
+                        // Create a new runtime inside the thread
+                        let rt = tokio::runtime::Runtime::new().unwrap();
+                        rt.block_on(async {
+                            let doc = doc_lock.lock().await;
+                            doc.buffer.clone()
+                        })
+                    });
+
+                    // Wait for the thread to finish and get the result
+                    handle.join().unwrap()
+                };
+
+                self.content = text_editor::Content::with_text(&text);
             }
             Message::UpdateCursors(cursors) => {
                 self.user_cursors = cursors;
@@ -965,10 +942,10 @@ impl Editor {
 
                             // Update the document content in the editor
                             let doc =
-                                serde_json::from_str::<DocumentBroadcast>(document_data.trim())
+                                serde_json::from_str::<DocumentTransmit>(document_data.trim())
                                     .unwrap();
                             let parsed_content = doc.text.to_string();
-                            let editor_content = self.content.text().trim().to_string(); // Ensure both are strings
+                            let editor_content = self.content.text().to_string(); // Ensure both are strings
 
                             // Debug logs to inspect the content comparison
                             println!("Current content: '{}'", editor_content);
@@ -984,12 +961,34 @@ impl Editor {
 
                             let doc_lock = self.document.clone();
                             return Task::future(async move {
+                                let decoded = Replica::decode(doc.id, &doc.replica).unwrap();
                                 *doc_lock.lock().await = Document {
-                                    buffer: parsed_content,
-                                    crdt: Replica::decode(1, &doc.replica).unwrap(),
+                                    buffer: doc.text.clone(),
+                                    crdt: decoded,
                                 };
 
                                 Message::NoOp
+                            });
+                        }
+                    }
+
+                    if message_text.contains("Edit") {
+                        if let Some(insert_start) = message_text.find("Edit:") {
+                            let insert_data = &message_text[insert_start + 5..]; // Skip "Edit:"
+                            let op = serde_json::from_str::<Operation>(insert_data.trim()).unwrap();
+                            let doc_lock = self.document.clone();
+                            return Task::future(async move {
+                                let mut doc = doc_lock.lock().await;
+                                match op.clone() {
+                                    Operation::Insert(insertion) => {
+                                        doc.integrate_insertion(insertion);
+                                    }
+                                    Operation::Delete(deletion) => {
+                                        doc.integrate_deletion(deletion);
+                                    }
+                                }
+
+                                Message::UpdateDoc(op)
                             });
                         }
                     }
@@ -1168,7 +1167,7 @@ where
 
 pub enum Input {
     Cursors(Vec<CursorMarker>),
-    Edit,
+    Edit(Operation),
 }
 
 fn server_worker() -> impl Stream<Item = Message> {
@@ -1187,9 +1186,9 @@ fn server_worker() -> impl Stream<Item = Message> {
 
             match input {
                 Input::Cursors(cursors) => {
-                    output.send(Message::UpdateCursors(cursors)).await.unwrap();
+                    output.send(Message::UpdateCursors(cursors)).await.unwrap()
                 }
-                _ => {}
+                Input::Edit(operation) => output.send(Message::UpdateDoc(operation)).await.unwrap(),
             }
         }
     })

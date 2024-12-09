@@ -1,6 +1,6 @@
 use crate::{
     editor::CursorMarker,
-    server::{AppState, DeleteRequest, DocumentBroadcast, InsertRequest, Insertion},
+    server::{AppState, Deletion, DocumentTransmit, Insertion, Operation},
 };
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
@@ -19,7 +19,8 @@ use futures::{
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
 };
-use std::{borrow::Cow, net::SocketAddr, ops::ControlFlow};
+use std::{borrow::Cow, net::SocketAddr};
+use tokio::sync::broadcast::Receiver;
 
 pub async fn auth(
     state: State<AppState>,
@@ -95,8 +96,10 @@ pub async fn ws_handler(
 async fn handle_read_socket(socket: WebSocket, who: SocketAddr, State(state): State<AppState>) {
     let (sender, _) = socket.split();
 
+    let rx = state.tx.subscribe();
+
     // Broadcast the content of the document to all clients
-    let mut send_task = tokio::spawn(broadcast(sender, who, state.clone()));
+    let mut send_task = tokio::spawn(broadcast(sender, rx, who, state.clone()));
 
     // If any one of the tasks exit, abort the other.
     tokio::select! {
@@ -142,8 +145,10 @@ async fn handle_edit_socket(
 
     let (sender, receiver) = socket.split();
 
+    let rx = state.tx.subscribe();
+
     // Broadcast the content of the document to client
-    let mut send_task = tokio::spawn(broadcast(sender, who, state.clone()));
+    let mut send_task = tokio::spawn(broadcast(sender, rx, who, state.clone()));
 
     // This second task will receive messages from client
     let mut recv_task = tokio::spawn(process_message(receiver, who, state.clone()));
@@ -179,15 +184,23 @@ async fn handle_edit_socket(
 
 async fn broadcast(
     mut sender: SplitSink<WebSocket, Message>,
+    mut rx: Receiver<String>,
     who: SocketAddr,
     state: AppState,
 ) -> i32 {
     let mut n_msg = 0;
+
     // Send the document and cursors to the client that just connected
     // This is the first message that the client will receive
     {
         let doc = state.document.lock().await;
-        let doc_json = serde_json::to_string(&DocumentBroadcast {
+        let mut users = state.users.lock().await;
+        let id = users
+            .get_id(who)
+            .unwrap_or_else(|| users.add_user(who, None)) as u64;
+
+        let doc_json = serde_json::to_string(&DocumentTransmit {
+            id,
             text: doc.buffer.clone(),
             replica: Replica::encode(&doc.crdt),
         })
@@ -200,7 +213,6 @@ async fn broadcast(
             return n_msg;
         }
 
-        let users = state.users.lock().await;
         let users_json = serde_json::to_string(&*users).unwrap();
         if sender
             .send(Message::Text(format!("Users: {}", users_json)))
@@ -213,43 +225,14 @@ async fn broadcast(
         println!("New client connected, document and cursors sent to {who}");
         n_msg += 2;
 
-        *state.is_dirty.lock().await = false;
         *state.is_moved.lock().await = false;
     }
 
-    loop {
-        if *state.is_dirty.lock().await {
-            let doc = state.document.lock().await;
-            let doc_json = serde_json::to_string(&DocumentBroadcast {
-                text: doc.buffer.clone(),
-                replica: Replica::encode(&doc.crdt),
-            })
-            .unwrap();
-            if sender
-                .send(Message::Text(format!("Document: {}", doc_json)))
-                .await
-                .is_err()
-            {
-                break;
-            }
-            n_msg += 1;
-
-            *state.is_dirty.lock().await = false;
+    while let Ok(msg) = rx.recv().await {
+        if sender.send(Message::Text(msg)).await.is_err() {
+            break;
         }
-
-        if *state.is_moved.lock().await {
-            let users = state.users.lock().await;
-            let users_json = serde_json::to_string(&*users).unwrap();
-            if sender
-                .send(Message::Text(format!("Users: {}", users_json)))
-                .await
-                .is_err()
-            {
-                break;
-            }
-            *state.is_moved.lock().await = false;
-            n_msg += 1;
-        }
+        n_msg += 1;
     }
 
     println!("Channel closed...");
@@ -282,23 +265,27 @@ async fn process_message(
                 match iter.next() {
                     Some("Insert") => {
                         let s = iter.collect::<Vec<&str>>().join(":");
-                        match serde_json::from_str::<InsertRequest>(s.trim()) {
-                            Ok(insert) => {
-                                if let Some(id) = state.users.lock().await.get_id(who) {
-                                    let mut fork =
-                                        Replica::decode(id as u64, &insert.replica).unwrap();
-                                    let insertion =
-                                        fork.inserted(insert.insert_at, insert.text.len());
-                                    state.document.lock().await.integrate_insertion(Insertion {
-                                        text: insert.text,
-                                        crdt: insertion,
-                                    });
-                                    *state.is_dirty.lock().await = true;
+                        match serde_json::from_str::<Insertion>(s.trim()) {
+                            Ok(insertion) => {
+                                if let Some(_) = state.users.lock().await.get_id(who) {
+                                    let mut doc = state.document.lock().await;
+                                    doc.integrate_insertion(insertion.clone());
+
+                                    state
+                                        .operations
+                                        .lock()
+                                        .await
+                                        .push(Operation::Insert(insertion.clone()));
+
                                     state
                                         .server_worker
-                                        .send(crate::editor::Input::Edit)
+                                        .send(crate::editor::Input::Edit(Operation::Insert(
+                                            insertion,
+                                        )))
                                         .await
                                         .unwrap();
+
+                                    *state.is_dirty.lock().await = true;
                                 }
                             }
                             Err(e) => println!("Error parsing insert: {e}"),
@@ -306,19 +293,27 @@ async fn process_message(
                     }
                     Some("Delete") => {
                         let s = iter.collect::<Vec<&str>>().join(":");
-                        match serde_json::from_str::<DeleteRequest>(s.trim()) {
-                            Ok(delete) => {
-                                if let Some(id) = state.users.lock().await.get_id(who) {
-                                    let mut fork =
-                                        Replica::decode(id as u64, &delete.replica).unwrap();
-                                    let deletion = fork.deleted(delete.range);
-                                    state.document.lock().await.integrate_deletion(deletion);
-                                    *state.is_dirty.lock().await = true;
+                        match serde_json::from_str::<Deletion>(s.trim()) {
+                            Ok(deletion) => {
+                                if let Some(_) = state.users.lock().await.get_id(who) {
+                                    let mut doc = state.document.lock().await;
+                                    doc.integrate_deletion(deletion.clone());
+
+                                    state
+                                        .operations
+                                        .lock()
+                                        .await
+                                        .push(Operation::Delete(deletion.clone()));
+
                                     state
                                         .server_worker
-                                        .send(crate::editor::Input::Edit)
+                                        .send(crate::editor::Input::Edit(Operation::Delete(
+                                            deletion,
+                                        )))
                                         .await
                                         .unwrap();
+
+                                    *state.is_dirty.lock().await = true;
                                 }
                             }
                             Err(e) => println!("Error parsing delete: {e}"),
@@ -329,7 +324,7 @@ async fn process_message(
                         match serde_json::from_str::<CursorMarker>(s.trim()) {
                             Ok(cursor) => {
                                 let mut users = state.users.lock().await;
-                                users.add_user(who, cursor);
+                                users.add_user(who, Some(cursor));
                                 *state.is_moved.lock().await = true;
 
                                 let cursors = users.get_all_cursors();

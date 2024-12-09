@@ -7,17 +7,20 @@ use argon2::{
     Argon2,
 };
 use axum::{middleware, routing::get, Router};
-use cola::{Deletion, EncodedReplica, Replica, ReplicaId};
+use cola::{EncodedReplica, Replica, ReplicaId};
 use futures::channel::mpsc;
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, ops::Range, sync::Arc};
-use tokio::{sync::Mutex, task::JoinHandle};
+use tokio::{
+    sync::{broadcast, Mutex},
+    task::JoinHandle,
+};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     pub id: usize,
-    pub cursor: CursorMarker,
+    pub cursor: Option<CursorMarker>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -32,7 +35,7 @@ impl Users {
         }
     }
 
-    pub fn add_user(&mut self, socket_addr: SocketAddr, cursor: CursorMarker) {
+    pub fn add_user(&mut self, socket_addr: SocketAddr, cursor: Option<CursorMarker>) -> usize {
         let id = self.user_map.len() + 1;
         self.user_map
             .entry(socket_addr)
@@ -40,6 +43,7 @@ impl Users {
                 user.cursor = cursor;
             })
             .or_insert(User { id, cursor });
+        id
     }
 
     pub fn get_id(&self, socket_addr: SocketAddr) -> Option<usize> {
@@ -49,7 +53,7 @@ impl Users {
     pub fn get_all_cursors(&self) -> Vec<CursorMarker> {
         self.user_map
             .values()
-            .map(|user| user.cursor.clone())
+            .filter_map(|user| user.cursor.clone())
             .collect()
     }
 
@@ -62,34 +66,30 @@ impl Users {
     }
 }
 
+#[derive(Debug)]
 pub struct Document {
     pub buffer: String,
     pub crdt: Replica,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct DocumentBroadcast {
+pub struct DocumentTransmit {
+    pub id: u64,
     pub text: String,
     pub replica: EncodedReplica,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Insertion {
+    pub insert_at: usize,
     pub text: String,
     pub crdt: cola::Insertion,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct InsertRequest {
-    pub insert_at: usize,
-    pub text: String,
-    pub replica: EncodedReplica,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct DeleteRequest {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Deletion {
     pub range: Range<usize>,
-    pub document_text: String,
-    pub replica: EncodedReplica,
+    pub crdt: cola::Deletion,
 }
 
 // Leveraged from https://docs.rs/cola-crdt/latest/cola/
@@ -103,14 +103,6 @@ impl Document {
         self.buffer.len()
     }
 
-    pub fn fork(&self, new_replica_id: ReplicaId) -> Self {
-        let crdt = self.crdt.fork(new_replica_id);
-        Document {
-            buffer: self.buffer.clone(),
-            crdt,
-        }
-    }
-
     pub fn check_newline_at(&self, index: usize) -> bool {
         self.buffer.chars().nth(index) == Some('\n')
     }
@@ -120,6 +112,7 @@ impl Document {
         self.buffer.insert_str(insert_at, &text);
         let insertion = self.crdt.inserted(insert_at, text.len());
         Insertion {
+            insert_at,
             text,
             crdt: insertion,
         }
@@ -127,21 +120,35 @@ impl Document {
 
     pub fn delete(&mut self, range: Range<usize>) -> Deletion {
         self.buffer.replace_range(range.clone(), "");
-        self.crdt.deleted(range)
+        let deletion = self.crdt.deleted(range.clone());
+        Deletion {
+            range,
+            crdt: deletion,
+        }
     }
 
     pub fn integrate_insertion(&mut self, insertion: Insertion) {
+        dbg!(&insertion);
+
         if let Some(offset) = self.crdt.integrate_insertion(&insertion.crdt) {
             self.buffer.insert_str(offset, &insertion.text);
         }
     }
 
     pub fn integrate_deletion(&mut self, deletion: Deletion) {
-        let ranges = self.crdt.integrate_deletion(&deletion);
+        dbg!(&deletion);
+
+        let ranges = self.crdt.integrate_deletion(&deletion.crdt);
         for range in ranges.into_iter().rev() {
             self.buffer.replace_range(range, "");
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum Operation {
+    Insert(Insertion),
+    Delete(Deletion),
 }
 
 #[derive(Clone)]
@@ -153,6 +160,8 @@ pub struct AppState {
     pub users: Arc<Mutex<Users>>,
     pub is_moved: Arc<Mutex<bool>>,
     pub server_worker: mpsc::Sender<Input>,
+    pub tx: broadcast::Sender<String>,
+    pub operations: Arc<Mutex<Vec<Operation>>>,
 }
 
 pub async fn start_server(
@@ -163,9 +172,12 @@ pub async fn start_server(
     users: Arc<Mutex<Users>>,
     is_moved: Arc<Mutex<bool>>,
     server_worker: mpsc::Sender<Input>,
+    operations: Arc<Mutex<Vec<Operation>>>,
 ) -> JoinHandle<()> {
     let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
     let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
+    let (tx, _rx) = broadcast::channel(100);
+
     let state = AppState {
         read_access_hash,
         write_access_hash,
@@ -174,7 +186,39 @@ pub async fn start_server(
         users,
         is_moved,
         server_worker,
+        tx,
+        operations,
     };
+
+    // Continuously broadcast any operations to the clients
+    let state_copy = state.clone();
+    tokio::spawn(async move {
+        let state = state_copy;
+
+        loop {
+            if *state.is_dirty.lock().await && state.tx.receiver_count() > 0 {
+                let mut operations = state.operations.lock().await;
+                for operation in operations.iter() {
+                    state
+                        .tx
+                        .send(format!(
+                            "Edit: {}",
+                            serde_json::to_string(operation).unwrap()
+                        ))
+                        .unwrap();
+                }
+                operations.clear();
+                *state.is_dirty.lock().await = false;
+            }
+
+            if *state.is_moved.lock().await {
+                let users = state.users.lock().await;
+                let users_json = serde_json::to_string(&*users).unwrap();
+                state.tx.send(format!("Users: {}", users_json)).unwrap();
+                *state.is_moved.lock().await = false;
+            }
+        }
+    });
 
     let app = Router::new()
         .route("/status", get(|| async { "UP" }))
