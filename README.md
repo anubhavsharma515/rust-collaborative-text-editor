@@ -4,20 +4,23 @@
 
 ### Team Information
 **Team Members:**
-- **[Jesse Na]**
-  - **Student Number:** [1005890788]
+- **Jesse Na**
+  - **Student Number:** 1005890788
   - **Preferred Email Address:** [Partner's Email]
 
-- **Anubhav**
-  - **Student Number:** [1004541659]
-  - **Preferred Email Address:** [anubhav.sharma@mail.utoronto.ca]
+- **Anubhav Sharma**
+  - **Student Number:** 1004541659
+  - **Preferred Email Address:** anubhav.sharma@mail.utoronto.ca
 
 ---
 
 ## Motivation
-The motivation for our project stemmed from a noticeable gap in the Rust ecosystem: the lack of a lightweight, terminal-based collaborative markdown editor. While there are excellent standalone tools for editing markdown, very few integrate terminal-based editing with real-time collaboration. Our aim was to combine markdown editing functionality, file management, and collaboration features to deliver a versatile tool for developers and writers.
+The motivation for our project stemmed from a noticeable gap in the Rust ecosystem: the lack of a lightweight, terminal-based collaborative markdown editor.
+While there are excellent standalone tools for editing markdown, very few integrate terminal-based editing with real-time collaboration.
+Our aim was to combine markdown editing functionality, file management, and collaboration features to deliver a versatile tool for developers and writers.
 
-The project was an exciting challenge to learn Rust and build a performant system, leveraging Rust's concurrency model and ecosystem libraries. It was also fun to explore how collaborative systems can work using WebSockets, all while filling a niche in the Rust ecosystem.
+The project was an exciting challenge to learn Rust and build a performant system, leveraging Rust's concurrency model and ecosystem libraries.
+It was also fun to explore how collaborative systems can work using WebSockets, all while filling a niche in the Rust ecosystem.
 
 ---
 
@@ -80,3 +83,48 @@ The final deliverable offers the following features:
    ```bash
    git clone <repository-url>
    cd <repository-name>
+   ```
+
+2. **Build the Project:**
+   ```bash
+   cargo build --release
+   ```
+
+3. **Start the Markdown Editor**
+   ```bash
+   ./target/release/editor
+   ```
+---
+
+## Contributions by Each Team Member
+
+- **Anubhav**:
+    - [ ] Implement a **Menu Bar** with options for file picking, theme selection, file saving, and Markdown preview.
+    - [ ] Implement a custom **User Cursor Position Marker** to track and display the user’s cursor location within the editor.
+    - [ ] Implement a **Status Bar** that supports text-analysis features like character, word and line count
+
+- **Jesse**:
+    - [ ] Implement a **Formatting Bar** with basic stylistic controls such as **bold, italic, underline**, **color customization** for text, along with **font size adjustments**.
+    - [ ] Set up key-binding shortcuts for common text editing (e.g., **cut, copy, paste, select, delete, and save**) as well as the text-formatting actions (mentioned above).
+    - [ ] Implement a custom **Shortcut Palette** widget for displaying supported key-bindings.
+
+
+Jesse:
+
+	-	Designed the WebSocket server using Axum.
+	-	Implemented markdown preview and rendering.
+	-	Optimized conflict resolution algorithms for collaborative editing.
+
+---
+
+## Lessons Learned and Concluding Remarks
+
+### Lessons Learned
+
+	•	Rust’s strong type system and concurrency model greatly enhance code safety and performance but require thoughtful design to balance complexity.
+	•	Building real-time collaborative systems is challenging, particularly around state synchronization and conflict resolution.
+	•	Leveraging community crates (e.g., iced, serde, async-tungstenite) accelerated development significantly.
+
+### Concluding Remarks
+
+This project was both rewarding and educational, providing valuable insights into Rust’s capabilities and its ecosystem. By filling a gap in terminal-based collaborative tools, we hope this project serves as a foundation for others in the community to expand upon.
