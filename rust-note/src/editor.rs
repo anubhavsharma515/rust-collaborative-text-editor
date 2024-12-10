@@ -869,12 +869,25 @@ impl Editor {
                 // Update text editor content with the document content
                 println!("HOST DOC");
                 let text = document.buffer;
-                let (x, y) = self.content.cursor_position();
+                let (line, col) = self.content.cursor_position();
                 if self.content.text() != text {
                     self.content = text_editor::Content::with_text(&text);
                 };
-                self.content
-                    .perform(text_editor::Action::Click(Point::new(x as f32, y as f32)));
+                // Start at the beginning
+                self.content.perform(text_editor::Action::Move(
+                    text_editor::Motion::DocumentStart,
+                ));
+                // Move to the right row
+                (0..line).for_each(|_| {
+                    self.content
+                        .perform(text_editor::Action::Move(text_editor::Motion::Down));
+                });
+
+                // Scroll to the right col
+                (0..col).for_each(|_| {
+                    self.content
+                        .perform(text_editor::Action::Move(text_editor::Motion::Right));
+                });
 
                 self.markdown_text = markdown::parse(&text).collect();
             }
@@ -907,7 +920,7 @@ impl Editor {
                 client::Event::MessageReceived(message) => {
                     // Extract the message as a string
                     let message_text = message.as_str();
-                    println!("Received: {}", message_text);
+                    // println!("Received: {}", message_text);
 
                     let parts: Vec<&str> = message_text.split(":").collect();
                     let mut iter = parts.into_iter();
@@ -947,14 +960,32 @@ impl Editor {
                                 let editor_content = self.content.text().to_string(); // Ensure both are strings
 
                                 // Debug logs to inspect the content comparison
-                                let (x, y) = self.content.cursor_position();
-                                println!("{x}, {y}");
+                                // println!("Current content: '{}'", editor_content);
+                                // println!("Parsed content: '{}'", parsed_content);
+                                // println!("Are they equal? {}", editor_content == parsed_content);
+                                // Optionally reposition the cursor
+                                let (line, col) = self.content.cursor_position();
                                 if editor_content != parsed_content {
                                     self.content = text_editor::Content::with_text(&parsed_content);
                                 };
-                                self.content.perform(text_editor::Action::Click(Point::new(
-                                    x as f32, y as f32,
-                                )));
+
+                                // Start at the beginning
+                                self.content.perform(text_editor::Action::Move(
+                                    text_editor::Motion::DocumentStart,
+                                ));
+                                // Move to the right row
+                                (0..line).for_each(|_| {
+                                    self.content.perform(text_editor::Action::Move(
+                                        text_editor::Motion::Down,
+                                    ));
+                                });
+
+                                // Scroll to the right col
+                                (0..col).for_each(|_| {
+                                    self.content.perform(text_editor::Action::Move(
+                                        text_editor::Motion::Right,
+                                    ));
+                                });
 
                                 self.markdown_text = markdown::parse(&parsed_content).collect();
 
