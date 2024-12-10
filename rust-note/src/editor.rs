@@ -113,6 +113,7 @@ pub struct Editor {
     read_password: Option<String>,
     edit_password: Option<String>,
     joined_session: bool,
+    leave_session: bool,
     started_session: bool,
     client_state: State,
     id: Option<UserId>, // Id for collab sessions
@@ -149,6 +150,7 @@ pub enum Message {
     TabSelected(TabId),
     Echo(client::Event),
     RequestClose,
+    LeaveSession,
     SessionClosed,
     CloseWindow(iced::window::Id),
     WorkerReady(mpsc::Sender<Input>),
@@ -236,6 +238,7 @@ impl Editor {
                 user_cursors: Vec::new(),
                 joined_session: false,
                 started_session: false,
+                leave_session: false,
                 read_password: None,
                 edit_password: None,
                 client_state: State::Disconnected,
@@ -280,7 +283,7 @@ impl Editor {
                         .style(button::primary)
                 } else if self.joined_session {
                     button("Leave Session")
-                        .on_press(Message::NoOp)
+                        .on_press(Message::LeaveSession)
                         .style(button::primary)
                 } else {
                     button("Collaborate")
@@ -864,6 +867,7 @@ impl Editor {
             }
             Message::UpdateHostDoc(document) => {
                 // Update text editor content with the document content
+                println!("HOST DOC");
                 let text = document.buffer;
                 let (x, y) = self.content.cursor_position();
                 if self.content.text() != text {
@@ -888,6 +892,9 @@ impl Editor {
                     )
                     .expect("Failed to serialize cursor data");
                     let message = format!("Cursor: {}", cursor_data);
+                    if self.leave_session {
+                        connection.clone().close();
+                    }
 
                     // Send the message
                     connection.clone().send(client::Message::User(message));
@@ -940,11 +947,8 @@ impl Editor {
                                 let editor_content = self.content.text().to_string(); // Ensure both are strings
 
                                 // Debug logs to inspect the content comparison
-                                println!("Current content: '{}'", editor_content);
-                                println!("Parsed content: '{}'", parsed_content);
-                                println!("Are they equal? {}", editor_content == parsed_content);
-                                // Optionally reposition the cursor
                                 let (x, y) = self.content.cursor_position();
+                                println!("{x}, {y}");
                                 if editor_content != parsed_content {
                                     self.content = text_editor::Content::with_text(&parsed_content);
                                 };
@@ -1015,6 +1019,15 @@ impl Editor {
                     // Send the close window message
                     Message::SessionClosed
                 });
+            }
+            Message::LeaveSession => {
+                let connection = if let State::Connected(ref mut connection) = self.client_state {
+                    Some(connection.clone())
+                } else {
+                    None
+                };
+                connection.unwrap().close();
+                self.joined_session = false;
             }
             Message::SessionClosed => {
                 println!("Server closed");

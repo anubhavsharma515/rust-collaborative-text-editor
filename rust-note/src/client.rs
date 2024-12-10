@@ -55,12 +55,22 @@ pub fn connect() -> impl Stream<Item = Event> {
                         }
 
                         message = input.select_next_some() => {
-                            let result = websocket.send(tungstenite::Message::Text(message.to_string())).await;
+                            match message {
+                                Message::CloseConnection => {
+                                    // Close the WebSocket connection gracefully
+                                    let _ = websocket.close(None).await;
+                                    let _ = output.send(Event::Disconnected).await;
+                                }
+                                other_message => {
+                                    // Send other messages to the WebSocket server
+                                    let result = websocket.send(tungstenite::Message::Text(other_message.to_string())).await;
 
-                            if result.is_err() {
-                                let _ = output.send(Event::Disconnected).await;
+                                    if result.is_err() {
+                                        let _ = output.send(Event::Disconnected).await;
 
-                                state = State::Disconnected;
+                                        state = State::Disconnected;
+                                    }
+                                }
                             }
                         }
                     }
@@ -97,6 +107,9 @@ impl Connection {
             .try_send(message)
             .expect("Send message to echo server");
     }
+    pub fn close(&mut self) {
+        self.send(Message::CloseConnection);
+    }
 }
 
 // Check if this needs to be an axum ws message
@@ -106,6 +119,7 @@ pub enum Message {
     Connected,
     Disconnected,
     User(String),
+    CloseConnection,
 }
 
 impl Message {
@@ -130,6 +144,7 @@ impl Message {
             Message::Connected => "Connected successfully!",
             Message::Disconnected => "Connection lost... Retrying...",
             Message::User(message) => message.as_str(),
+            Message::CloseConnection => "Closing Connection",
         }
     }
 }
