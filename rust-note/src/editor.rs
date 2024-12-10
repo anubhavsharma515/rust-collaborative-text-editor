@@ -1028,6 +1028,8 @@ impl Editor {
                 };
                 connection.unwrap().close();
                 self.joined_session = false;
+                self.client_state = State::Disconnected;
+                self.user_cursors.clear();
             }
             Message::SessionClosed => {
                 println!("Server closed");
