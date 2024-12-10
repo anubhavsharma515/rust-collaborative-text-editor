@@ -835,8 +835,16 @@ impl Editor {
 
                 let doc = self.document.clone();
                 let is_dirty_lock = self.is_dirty.clone();
-                let read_password = self.read_password.clone();
-                let edit_password = self.edit_password.clone();
+                let read_password = if self.modal_content.read_password_input.is_empty() {
+                    self.read_password.clone()
+                } else {
+                    Some(self.modal_content.read_password_input.clone())
+                };
+                let edit_password = if self.modal_content.write_password_input.is_empty() {
+                    self.edit_password.clone()
+                } else {
+                    Some(self.modal_content.write_password_input.clone())
+                };
                 let users_lock = self.users.clone();
                 let is_moved_lock = self.is_moved.clone();
                 let server_thread_lock = self.server_thread.clone();
