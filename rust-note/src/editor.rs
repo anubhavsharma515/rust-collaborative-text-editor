@@ -1,9 +1,8 @@
 use crate::{
     client,
-    server::{start_server, Document, DocumentTransmit, Operation, Users},
+    server::{start_server, Document, Operation, UserId, Users},
     widgets,
 };
-use cola::Replica;
 use futures::{channel::mpsc, SinkExt, Stream};
 use iced::{
     highlighter, keyboard, mouse, stream,
@@ -23,7 +22,6 @@ use serde_json::json;
 use std::{
     ffi,
     net::{IpAddr, Ipv4Addr, SocketAddr},
-    ops::Range,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -117,6 +115,7 @@ pub struct Editor {
     joined_session: bool,
     started_session: bool,
     client_state: State,
+    id: Option<UserId>, // Id for collab sessions
     server_worker: Option<mpsc::Sender<Input>>,
     operations: Arc<Mutex<Vec<Operation>>>,
 }
@@ -144,8 +143,8 @@ pub enum Message {
     ReadPasswordChanged(String),
     FilePathChanged(String),
     StartSessionPressed,
-    UpdateDoc(Operation),
-    UpdateCursors(Vec<CursorMarker>),
+    UpdateHostDoc(Document),
+    UpdateHostCursors(Vec<CursorMarker>),
     JoinSessionPressed,
     TabSelected(TabId),
     Echo(client::Event),
@@ -217,7 +216,7 @@ impl Editor {
         (
             Self {
                 content: text_editor::Content::new(),
-                document: Arc::new(Mutex::new(Document::new(String::new(), 1))),
+                document: Arc::new(Mutex::new(Document::new(String::new()))),
                 is_dirty: Arc::new(Mutex::new(false)),
                 cursor_marker: CursorMarker::new(0.2),
                 is_moved: Arc::new(Mutex::new(false)),
@@ -240,6 +239,7 @@ impl Editor {
                 read_password: None,
                 edit_password: None,
                 client_state: State::Disconnected,
+                id: None,
                 server_worker: None,
                 operations: Arc::new(Mutex::new(Vec::new())),
             },
@@ -614,7 +614,6 @@ impl Editor {
                                 if let Some(i) = text_to_search.find(&s) {
                                     index = i + start;
                                     let deletion = doc.delete(index..(index + s.len()));
-                                    doc.integrate_deletion(deletion.clone());
                                     operations.push(Operation::Delete(deletion));
 
                                     s.len()
@@ -635,7 +634,6 @@ impl Editor {
                                     }
 
                                     let insertion = doc.insert(index, text.clone());
-                                    doc.integrate_insertion(insertion.clone());
                                     operations.push(Operation::Insert(insertion));
                                 }
                                 text_editor::Edit::Paste(text) => {
@@ -646,39 +644,33 @@ impl Editor {
                                     }
 
                                     let insertion = doc.insert(index, text);
-                                    doc.integrate_insertion(insertion.clone());
                                     operations.push(Operation::Insert(insertion));
                                 }
                                 text_editor::Edit::Enter => {
                                     let text = String::from("\n");
 
                                     let insertion = doc.insert(index, text);
-                                    doc.integrate_insertion(insertion.clone());
                                     operations.push(Operation::Insert(insertion));
                                 }
                                 text_editor::Edit::Delete => {
                                     if num_deleted == 0 && doc.len() > index + 1 {
                                         let deletion = doc.delete(index..(index + 1));
-                                        doc.integrate_deletion(deletion.clone());
                                         operations.push(Operation::Delete(deletion));
                                     }
 
                                     if doc.len() == 1 {
                                         let deletion = doc.delete(0..1); // Remove remaining newline character
-                                        doc.integrate_deletion(deletion.clone());
                                         operations.push(Operation::Delete(deletion));
                                     }
                                 }
                                 text_editor::Edit::Backspace => {
                                     if num_deleted == 0 && doc.len() > 1 {
                                         let deletion = doc.delete((index - 1)..index);
-                                        doc.integrate_deletion(deletion.clone());
                                         operations.push(Operation::Delete(deletion));
                                     }
 
                                     if doc.len() == 1 {
                                         let deletion = doc.delete(0..1); // Remove remaining newline character
-                                        doc.integrate_deletion(deletion.clone());
                                         operations.push(Operation::Delete(deletion));
                                     }
                                 }
@@ -703,8 +695,11 @@ impl Editor {
                                     }
                                 }
                             }
+                            if let Some(_) = connection {
+                                operations.clear();
+                            }
                             *is_dirty_lock.lock().await = true;
-                            dbg!(&doc.buffer);
+
                             Message::NoOp
                         }));
                     }
@@ -741,7 +736,7 @@ impl Editor {
                         *is_moved_lock.lock().await = true;
 
                         let cursors = users.get_all_cursors();
-                        Message::UpdateCursors(cursors)
+                        Message::UpdateHostCursors(cursors)
                     }));
                 }
 
@@ -844,8 +839,13 @@ impl Editor {
                 let server_thread_lock = self.server_thread.clone();
                 let server_worker = self.server_worker.clone().unwrap();
                 let operations_lock = self.operations.clone();
+                self.id = Some(1);
                 return Task::future(async move {
                     let mut server_thread = server_thread_lock.lock().await;
+                    users_lock.lock().await.add_user(
+                        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
+                        None,
+                    );
                     *server_thread = Some(
                         start_server(
                             read_password,
@@ -862,27 +862,19 @@ impl Editor {
                     Message::NoOp
                 });
             }
-            Message::UpdateDoc(operation) => {
-                dbg!(&operation);
-                let doc_lock = self.document.clone();
-                let text = {
-                    // Spawn a new thread to run the async code
-                    let handle = std::thread::spawn(move || {
-                        // Create a new runtime inside the thread
-                        let rt = tokio::runtime::Runtime::new().unwrap();
-                        rt.block_on(async {
-                            let doc = doc_lock.lock().await;
-                            doc.buffer.clone()
-                        })
-                    });
-
-                    // Wait for the thread to finish and get the result
-                    handle.join().unwrap()
+            Message::UpdateHostDoc(document) => {
+                // Update text editor content with the document content
+                let text = document.buffer;
+                let (x, y) = self.content.cursor_position();
+                if self.content.text() != text {
+                    self.content = text_editor::Content::with_text(&text);
                 };
+                self.content
+                    .perform(text_editor::Action::Click(Point::new(x as f32, y as f32)));
 
-                self.content = text_editor::Content::with_text(&text);
+                self.markdown_text = markdown::parse(&text).collect();
             }
-            Message::UpdateCursors(cursors) => {
+            Message::UpdateHostCursors(cursors) => {
                 self.user_cursors = cursors;
             }
             Message::Echo(event) => match event {
@@ -908,89 +900,71 @@ impl Editor {
                 client::Event::MessageReceived(message) => {
                     // Extract the message as a string
                     let message_text = message.as_str();
-                    println!("Users data: {}", message_text);
+                    println!("Received: {}", message_text);
 
-                    // Check if the message contains a "Users" section
-                    if message_text.contains("Users") {
-                        // Extract the part of the message that represents users data
-                        if let Some(users_start) = message_text.find("Users:") {
-                            let users_data = &message_text[users_start + 6..]; // Skip "Users:"
-                            println!("Users data: {}", users_data);
+                    let parts: Vec<&str> = message_text.split(":").collect();
+                    let mut iter = parts.into_iter();
+                    match iter.next() {
+                        Some("Users") => {
+                            // Extract the part of the message that represents users data
+                            if let Some(users_start) = message_text.find("Users:") {
+                                let users_data = &message_text[users_start + 6..]; // Skip "Users:"
+                                println!("Users data: {}", users_data);
 
-                            // Attempt to parse the users data into a Users struct (you'll need to know how it's formatted)
-                            if let Ok(users) = serde_json::from_str::<Users>(users_data.trim()) {
-                                // Clone the Arc<Mutex<Users>> for async access
-                                let users_lock = self.users.clone();
-                                self.user_cursors = users.get_all_cursors();
-                                // Update the mutex with the new users data
-                                return Task::future(async move {
-                                    let mut locked_users = users_lock.lock().await;
-                                    *locked_users = users;
-                                    Message::NoOp
-                                });
-                            } else {
-                                println!("Failed to parse users data");
+                                // Attempt to parse the users data into a Users struct (you'll need to know how it's formatted)
+                                if let Ok(users) = serde_json::from_str::<Users>(users_data.trim())
+                                {
+                                    // Clone the Arc<Mutex<Users>> for async access
+                                    let users_lock = self.users.clone();
+                                    self.user_cursors = users.get_all_cursors();
+                                    // Update the mutex with the new users data
+                                    return Task::future(async move {
+                                        let mut locked_users = users_lock.lock().await;
+                                        *locked_users = users;
+                                        Message::NoOp
+                                    });
+                                } else {
+                                    println!("Failed to parse users data");
+                                }
                             }
                         }
-                    }
+                        Some("Document") => {
+                            // Extract the part of the message that represents the document data
+                            if let Some(document_start) = message_text.find("Document:") {
+                                let document_data = &message_text[document_start + 9..]; // Skip "Document:"
 
-                    // Check if the message contains a "Document" section
-                    if message_text.contains("Document") {
-                        // Extract the part of the message that represents the document data
-                        if let Some(document_start) = message_text.find("Document:") {
-                            let document_data = &message_text[document_start + 9..]; // Skip "Document:"
+                                // Update the document content in the editor
+                                let server_doc =
+                                    serde_json::from_str::<Document>(document_data.trim()).unwrap();
+                                let parsed_content = server_doc.buffer;
+                                let editor_content = self.content.text().to_string(); // Ensure both are strings
 
-                            // Update the document content in the editor
-                            let doc =
-                                serde_json::from_str::<DocumentTransmit>(document_data.trim())
-                                    .unwrap();
-                            let parsed_content = doc.text.to_string();
-                            let editor_content = self.content.text().to_string(); // Ensure both are strings
-
-                            // Debug logs to inspect the content comparison
-                            println!("Current content: '{}'", editor_content);
-                            println!("Parsed content: '{}'", parsed_content);
-                            println!("Are they equal? {}", editor_content == parsed_content);
-                            // Optionally reposition the cursor
-                            let (x, y) = self.content.cursor_position();
-                            if editor_content != parsed_content {
-                                self.content = text_editor::Content::with_text(&parsed_content);
-                            };
-                            self.content
-                                .perform(text_editor::Action::Drag(Point::new(x as f32, y as f32)));
-
-                            let doc_lock = self.document.clone();
-                            return Task::future(async move {
-                                let decoded = Replica::decode(doc.id, &doc.replica).unwrap();
-                                *doc_lock.lock().await = Document {
-                                    buffer: doc.text.clone(),
-                                    crdt: decoded,
+                                // Debug logs to inspect the content comparison
+                                println!("Current content: '{}'", editor_content);
+                                println!("Parsed content: '{}'", parsed_content);
+                                println!("Are they equal? {}", editor_content == parsed_content);
+                                // Optionally reposition the cursor
+                                let (x, y) = self.content.cursor_position();
+                                if editor_content != parsed_content {
+                                    self.content = text_editor::Content::with_text(&parsed_content);
                                 };
+                                self.content.perform(text_editor::Action::Click(Point::new(
+                                    x as f32, y as f32,
+                                )));
 
-                                Message::NoOp
-                            });
+                                self.markdown_text = markdown::parse(&parsed_content).collect();
+
+                                let doc_lock = self.document.clone();
+                                return Task::future(async move {
+                                    let mut doc = doc_lock.lock().await;
+                                    doc.last_edit = server_doc.last_edit;
+                                    doc.buffer = parsed_content;
+
+                                    Message::NoOp
+                                });
+                            }
                         }
-                    }
-
-                    if message_text.contains("Edit") {
-                        if let Some(insert_start) = message_text.find("Edit:") {
-                            let insert_data = &message_text[insert_start + 5..]; // Skip "Edit:"
-                            let op = serde_json::from_str::<Operation>(insert_data.trim()).unwrap();
-                            let doc_lock = self.document.clone();
-                            return Task::future(async move {
-                                let mut doc = doc_lock.lock().await;
-                                match op.clone() {
-                                    Operation::Insert(insertion) => {
-                                        doc.integrate_insertion(insertion);
-                                    }
-                                    Operation::Delete(deletion) => {
-                                        doc.integrate_deletion(deletion);
-                                    }
-                                }
-
-                                Message::UpdateDoc(op)
-                            });
-                        }
+                        _ => {}
                     }
                 }
             },
@@ -1167,7 +1141,7 @@ where
 
 pub enum Input {
     Cursors(Vec<CursorMarker>),
-    Edit(Operation),
+    Edit(Document),
 }
 
 fn server_worker() -> impl Stream<Item = Message> {
@@ -1185,10 +1159,13 @@ fn server_worker() -> impl Stream<Item = Message> {
             let input = receiver.select_next_some().await;
 
             match input {
-                Input::Cursors(cursors) => {
-                    output.send(Message::UpdateCursors(cursors)).await.unwrap()
+                Input::Cursors(cursors) => output
+                    .send(Message::UpdateHostCursors(cursors))
+                    .await
+                    .unwrap(),
+                Input::Edit(document) => {
+                    output.send(Message::UpdateHostDoc(document)).await.unwrap()
                 }
-                Input::Edit(operation) => output.send(Message::UpdateDoc(operation)).await.unwrap(),
             }
         }
     })

@@ -1,6 +1,6 @@
 use crate::{
     editor::CursorMarker,
-    server::{AppState, Deletion, DocumentTransmit, Insertion, Operation},
+    server::{AppState, Deletion, Insertion, Operation},
 };
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{
@@ -14,7 +14,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use axum_extra::TypedHeader;
-use cola::Replica;
 use futures::{
     sink::SinkExt,
     stream::{SplitSink, SplitStream, StreamExt},
@@ -190,21 +189,17 @@ async fn broadcast(
 ) -> i32 {
     let mut n_msg = 0;
 
-    // Send the document and cursors to the client that just connected
+    // Send the document, cursors, and the client's id to the client that just connected
     // This is the first message that the client will receive
     {
         let doc = state.document.lock().await;
         let mut users = state.users.lock().await;
-        let id = users
+        // Get the id of the user, if it does not exist, add it
+        users
             .get_id(who)
             .unwrap_or_else(|| users.add_user(who, None)) as u64;
 
-        let doc_json = serde_json::to_string(&DocumentTransmit {
-            id,
-            text: doc.buffer.clone(),
-            replica: Replica::encode(&doc.crdt),
-        })
-        .unwrap();
+        let doc_json = serde_json::to_string(&*doc).unwrap();
         if sender
             .send(Message::Text(format!("Document: {}", doc_json)))
             .await
@@ -222,13 +217,13 @@ async fn broadcast(
             return n_msg;
         }
 
-        println!("New client connected, document and cursors sent to {who}");
-        n_msg += 2;
-
-        *state.is_moved.lock().await = false;
+        println!("New client connected, document, id and cursors sent to {who}");
+        n_msg += 3;
     }
 
+    // Forward the broadcasts to the client
     while let Ok(msg) = rx.recv().await {
+        println!("Forwarding broadcast: {}", &msg);
         if sender.send(Message::Text(msg)).await.is_err() {
             break;
         }
@@ -269,7 +264,7 @@ async fn process_message(
                             Ok(insertion) => {
                                 if let Some(_) = state.users.lock().await.get_id(who) {
                                     let mut doc = state.document.lock().await;
-                                    doc.integrate_insertion(insertion.clone());
+                                    doc.insert(insertion.insert_at, insertion.clone().text);
 
                                     state
                                         .operations
@@ -279,9 +274,7 @@ async fn process_message(
 
                                     state
                                         .server_worker
-                                        .send(crate::editor::Input::Edit(Operation::Insert(
-                                            insertion,
-                                        )))
+                                        .send(crate::editor::Input::Edit(doc.clone()))
                                         .await
                                         .unwrap();
 
@@ -297,7 +290,7 @@ async fn process_message(
                             Ok(deletion) => {
                                 if let Some(_) = state.users.lock().await.get_id(who) {
                                     let mut doc = state.document.lock().await;
-                                    doc.integrate_deletion(deletion.clone());
+                                    doc.delete(deletion.clone().range);
 
                                     state
                                         .operations
@@ -307,9 +300,7 @@ async fn process_message(
 
                                     state
                                         .server_worker
-                                        .send(crate::editor::Input::Edit(Operation::Delete(
-                                            deletion,
-                                        )))
+                                        .send(crate::editor::Input::Edit(doc.clone()))
                                         .await
                                         .unwrap();
 

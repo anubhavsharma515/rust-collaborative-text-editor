@@ -7,7 +7,6 @@ use argon2::{
     Argon2,
 };
 use axum::{middleware, routing::get, Router};
-use cola::{EncodedReplica, Replica, ReplicaId};
 use futures::channel::mpsc;
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
@@ -36,14 +35,18 @@ impl Users {
     }
 
     pub fn add_user(&mut self, socket_addr: SocketAddr, cursor: Option<CursorMarker>) -> usize {
-        let id = self.user_map.len() + 1;
-        self.user_map
+        let len = self.user_map.len();
+        let v = self
+            .user_map
             .entry(socket_addr)
             .and_modify(|user| {
                 user.cursor = cursor;
             })
-            .or_insert(User { id, cursor });
-        id
+            .or_insert(User {
+                id: len + 1,
+                cursor,
+            });
+        v.id
     }
 
     pub fn get_id(&self, socket_addr: SocketAddr) -> Option<usize> {
@@ -66,37 +69,43 @@ impl Users {
     }
 }
 
-#[derive(Debug)]
-pub struct Document {
-    pub buffer: String,
-    pub crdt: Replica,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct DocumentTransmit {
-    pub id: u64,
-    pub text: String,
-    pub replica: EncodedReplica,
-}
+pub type UserId = usize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Insertion {
     pub insert_at: usize,
     pub text: String,
-    pub crdt: cola::Insertion,
+}
+
+impl Insertion {
+    pub fn new(insert_at: usize, text: String) -> Self {
+        Self { insert_at, text }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deletion {
     pub range: Range<usize>,
-    pub crdt: cola::Deletion,
 }
 
-// Leveraged from https://docs.rs/cola-crdt/latest/cola/
+impl Deletion {
+    pub fn new(range: Range<usize>) -> Self {
+        Self { range }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Document {
+    pub last_edit: UserId,
+    pub buffer: String,
+}
+
 impl Document {
-    pub fn new(buffer: String, replica_id: ReplicaId) -> Self {
-        let crdt = Replica::new(replica_id, buffer.len());
-        Document { buffer, crdt }
+    pub fn new(buffer: String) -> Self {
+        Document {
+            last_edit: 0,
+            buffer,
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -110,38 +119,12 @@ impl Document {
     pub fn insert<S: Into<String>>(&mut self, insert_at: usize, text: S) -> Insertion {
         let text = text.into();
         self.buffer.insert_str(insert_at, &text);
-        let insertion = self.crdt.inserted(insert_at, text.len());
-        Insertion {
-            insert_at,
-            text,
-            crdt: insertion,
-        }
+        Insertion::new(insert_at, text)
     }
 
     pub fn delete(&mut self, range: Range<usize>) -> Deletion {
         self.buffer.replace_range(range.clone(), "");
-        let deletion = self.crdt.deleted(range.clone());
-        Deletion {
-            range,
-            crdt: deletion,
-        }
-    }
-
-    pub fn integrate_insertion(&mut self, insertion: Insertion) {
-        dbg!(&insertion);
-
-        if let Some(offset) = self.crdt.integrate_insertion(&insertion.crdt) {
-            self.buffer.insert_str(offset, &insertion.text);
-        }
-    }
-
-    pub fn integrate_deletion(&mut self, deletion: Deletion) {
-        dbg!(&deletion);
-
-        let ranges = self.crdt.integrate_deletion(&deletion.crdt);
-        for range in ranges.into_iter().rev() {
-            self.buffer.replace_range(range, "");
-        }
+        Deletion::new(range)
     }
 }
 
@@ -198,12 +181,13 @@ pub async fn start_server(
         loop {
             if *state.is_dirty.lock().await && state.tx.receiver_count() > 0 {
                 let mut operations = state.operations.lock().await;
-                for operation in operations.iter() {
+                for _ in operations.iter() {
+                    println!("Broadcasting document...");
                     state
                         .tx
                         .send(format!(
-                            "Edit: {}",
-                            serde_json::to_string(operation).unwrap()
+                            "Document: {}",
+                            serde_json::to_string(&*state.document.lock().await).unwrap()
                         ))
                         .unwrap();
                 }
@@ -211,7 +195,7 @@ pub async fn start_server(
                 *state.is_dirty.lock().await = false;
             }
 
-            if *state.is_moved.lock().await {
+            if *state.is_moved.lock().await && state.tx.receiver_count() > 0 {
                 let users = state.users.lock().await;
                 let users_json = serde_json::to_string(&*users).unwrap();
                 state.tx.send(format!("Users: {}", users_json)).unwrap();
