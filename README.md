@@ -14,6 +14,10 @@
 
 ---
 
+## Video Demo
+
+---
+
 ## Motivation
 The motivation for our project stemmed from a noticeable gap in the Rust ecosystem: the lack of a lightweight, terminal-based collaborative markdown editor.
 While there are excellent standalone tools for editing markdown, very few integrate terminal-based editing with real-time collaboration.
@@ -25,32 +29,35 @@ It was also fun to explore how collaborative systems can work using WebSockets, 
 ---
 
 ## Objectives
-The objectives of our project were:
-1. **Build a lightweight markdown editor** that provides an intuitive user experience for terminal users.
-2. **Integrate file handling features** such as opening, saving, and previewing markdown files.
-3. **Enable real-time collaboration**, where multiple users can edit a document simultaneously with user cursors tracked and displayed in real time.
-4. Provide a robust yet simple setup process to make the tool accessible to a broad audience.
+The objective of this project is to develop a lightweight, low-latency, terminal-based collaborative text editor in Rust. This tool aims to enable multiple users to collaboratively edit and view text files in real time while providing essential functionalities of popular text editors, such as text styling and markdown preview. By operating entirely within the terminal, the tool fills a gap in the Rust ecosystem, offering a Rust-native, CLI-based solution for collaborative editing.
+
+Instead of relying on turn-based edits or simplistic collaboration models, this project tackles the challenges of real-time editing through a lock-based approach. Due to the complexities encountered with the Cola CRDT crate, particularly in processing concurrent edits in the `iced` text-editor interface, our system enforces a locking mechanism. This ensures that users cannot make edits to the same line concurrently but are free to edit other parts of the document. This compromise provides a balance between real-time editing and maintaining document consistency while avoiding potential merge conflicts.
+
+By leveraging Rust’s strengths in performance, safety, and concurrency, this project delivers a robust and responsive terminal application that lays the groundwork for future enhancements, such as syntax-aware editing for collaborative coding.
 
 ---
 
 ## Features
-The final deliverable offers the following features:
-1. **Markdown Editing:**
-   - Supports writing and editing markdown syntax in a terminal-based interface.
-   - Provides a markdown preview mode.
 
-2. **File Management:**
-   - Open markdown files from the local system for editing.
-   - Save markdown files back to the local system.
+1. **Custom Client-Side Interface for Text Editing**
+   - Implements a terminal-based text editor with basic text-editing operations such as creating, opening, editing, and saving files.
+   - Provides button-based and hotkey-enabled text styling options, such as bold, italics, and underline.
+   - Includes basic text-analysis tools, such as word, line, paragraph, and character counts.
+   - Allows customization through different themes and font families for an enhanced user experience.
+   - Supports a markdown preview mode, similar to Obsidian, for `.md` files, enabling live preview of document edits.
 
-3. **Real-Time Collaboration:**
-   - Multiple users can edit the same document simultaneously using WebSockets.
-   - Live cursor tracking: Each user's cursor is visually distinguished.
-   - Conflict resolution ensures seamless integration of edits.
+2. **Real-Time Collaborative Editing with Lock-Based Concurrency**
+   - Enables users to host a file and invite others to collaborate, with options for full or read-only access.
+   - Implements lock-based editing to prevent concurrent modifications to the same line of text while allowing edits to other parts of the document.
+   - Provides a visual indication of locked lines and active collaborators to enhance usability.
+   - Includes session password protection, configurable at runtime or through environment variables.
 
-4. **Customization:**
-   - Optional themes for the editing interface.
-   - Terminal-based interaction for minimal overhead.
+3. **Networking and Collaboration Features**
+   - Uses WebSockets for real-time synchronization between clients.
+   - Tracks and displays user cursors in real time, assigning distinct colors to each user.
+   - Ensures consistent document state across all participants without the complexity of real-time conflict resolution.
+
+These features prioritize usability, simplicity, and performance, catering to users who prefer terminal environments and seek collaborative tools with essential text editing capabilities. Future iterations of the tool may revisit CRDT-based editing to expand its functionality and flexibility.
 
 ---
 
@@ -98,6 +105,7 @@ The final deliverable offers the following features:
 
 ## Contributions by Each Team Member
 
+Since this project was
 - **Anubhav**:
     - [ ] Implement a **Menu Bar** with options for file picking, theme selection, file saving, and Markdown preview.
     - [ ] Implement a custom **User Cursor Position Marker** to track and display the user’s cursor location within the editor.
