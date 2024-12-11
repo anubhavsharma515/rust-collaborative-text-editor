@@ -7,7 +7,7 @@ use argon2::{
     Argon2,
 };
 use axum::{middleware, routing::get, Router};
-use futures::channel::mpsc;
+use futures::{channel::mpsc, SinkExt};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, net::SocketAddr, ops::Range, sync::Arc};
@@ -73,24 +73,30 @@ pub type UserId = usize;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Insertion {
+    pub made_by: UserId,
     pub insert_at: usize,
     pub text: String,
 }
 
 impl Insertion {
-    pub fn new(insert_at: usize, text: String) -> Self {
-        Self { insert_at, text }
+    pub fn new(made_by: UserId, insert_at: usize, text: String) -> Self {
+        Self {
+            made_by,
+            insert_at,
+            text,
+        }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Deletion {
+    pub made_by: UserId,
     pub range: Range<usize>,
 }
 
 impl Deletion {
-    pub fn new(range: Range<usize>) -> Self {
-        Self { range }
+    pub fn new(made_by: UserId, range: Range<usize>) -> Self {
+        Self { made_by, range }
     }
 }
 
@@ -119,12 +125,12 @@ impl Document {
     pub fn insert<S: Into<String>>(&mut self, insert_at: usize, text: S) -> Insertion {
         let text = text.into();
         self.buffer.insert_str(insert_at, &text);
-        Insertion::new(insert_at, text)
+        Insertion::new(self.last_edit, insert_at, text)
     }
 
     pub fn delete(&mut self, range: Range<usize>) -> Deletion {
         self.buffer.replace_range(range.clone(), "");
-        Deletion::new(range)
+        Deletion::new(self.last_edit, range)
     }
 }
 
@@ -144,7 +150,6 @@ pub struct AppState {
     pub is_moved: Arc<Mutex<bool>>,
     pub server_worker: mpsc::Sender<Input>,
     pub tx: broadcast::Sender<String>,
-    pub operations: Arc<Mutex<Vec<Operation>>>,
 }
 
 pub async fn start_server(
@@ -155,7 +160,6 @@ pub async fn start_server(
     users: Arc<Mutex<Users>>,
     is_moved: Arc<Mutex<bool>>,
     server_worker: mpsc::Sender<Input>,
-    operations: Arc<Mutex<Vec<Operation>>>,
 ) -> JoinHandle<()> {
     let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
     let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
@@ -170,37 +174,49 @@ pub async fn start_server(
         is_moved,
         server_worker,
         tx,
-        operations,
     };
 
     // Continuously broadcast any operations to the clients
     let state_copy = state.clone();
     tokio::spawn(async move {
-        let state = state_copy;
+        let mut state = state_copy;
 
         loop {
-            if *state.is_dirty.lock().await && state.tx.receiver_count() > 0 {
-                let mut operations = state.operations.lock().await;
-                for _ in operations.iter() {
-                    println!("Broadcasting document...");
+            if state.tx.receiver_count() == 0 {
+                *state.is_dirty.lock().await = false;
+                continue;
+            }
+
+            if *state.is_dirty.lock().await {
+                let doc = state.document.lock().await;
+                state
+                    .tx
+                    .send(format!(
+                        "Document: {}",
+                        serde_json::to_string(&*doc).unwrap()
+                    ))
+                    .unwrap();
+
+                // If the edit was not made by the host, make the host update its text editor content
+                if doc.last_edit != 1 {
                     state
-                        .tx
-                        .send(format!(
-                            "Document: {}",
-                            serde_json::to_string(&*state.document.lock().await).unwrap()
-                        ))
+                        .server_worker
+                        .send(crate::editor::Input::Edit(doc.clone()))
+                        .await
                         .unwrap();
                 }
-                operations.clear();
+
                 *state.is_dirty.lock().await = false;
             }
 
-            if *state.is_moved.lock().await && state.tx.receiver_count() > 0 {
+            if *state.is_moved.lock().await {
                 let users = state.users.lock().await;
                 let users_json = serde_json::to_string(&*users).unwrap();
                 state.tx.send(format!("Users: {}", users_json)).unwrap();
                 *state.is_moved.lock().await = false;
             }
+
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     });
 

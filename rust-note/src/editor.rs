@@ -118,7 +118,6 @@ pub struct Editor {
     client_state: State,
     id: Option<UserId>, // Id for collab sessions
     server_worker: Option<mpsc::Sender<Input>>,
-    operations: Arc<Mutex<Vec<Operation>>>,
 }
 
 enum State {
@@ -244,7 +243,6 @@ impl Editor {
                 client_state: State::Disconnected,
                 id: None,
                 server_worker: None,
-                operations: Arc::new(Mutex::new(Vec::new())),
             },
             Task::none(),
         )
@@ -588,8 +586,8 @@ impl Editor {
 
                 let doc_lock = self.document.clone();
                 let is_dirty_lock = self.is_dirty.clone();
-                let operations_lock = self.operations.clone();
                 let selection = self.content.selection().clone();
+                let id = self.id;
 
                 self.content.perform(action.clone());
 
@@ -601,8 +599,11 @@ impl Editor {
                     text_editor::Action::Edit(edit) => {
                         // Translate local user edit action to document operations
                         tasks.push(Task::future(async move {
-                            let mut operations = operations_lock.lock().await;
+                            let mut operations = Vec::new();
                             let mut doc = doc_lock.lock().await;
+                            if let Some(id) = id {
+                                doc.last_edit = id;
+                            }
 
                             let num_deleted = if let Some(s) = selection {
                                 // Find the selection in a slice of the content text
@@ -849,7 +850,6 @@ impl Editor {
                 let is_moved_lock = self.is_moved.clone();
                 let server_thread_lock = self.server_thread.clone();
                 let server_worker = self.server_worker.clone().unwrap();
-                let operations_lock = self.operations.clone();
                 self.id = Some(1);
                 return Task::future(async move {
                     let mut server_thread = server_thread_lock.lock().await;
@@ -866,7 +866,6 @@ impl Editor {
                             users_lock,
                             is_moved_lock,
                             server_worker,
-                            operations_lock,
                         )
                         .await,
                     );
@@ -875,29 +874,7 @@ impl Editor {
             }
             Message::UpdateHostDoc(document) => {
                 // Update text editor content with the document content
-                println!("HOST DOC");
-                let text = document.buffer;
-                let (line, col) = self.content.cursor_position();
-                if self.content.text() != text {
-                    self.content = text_editor::Content::with_text(&text);
-                };
-                // Start at the beginning
-                self.content.perform(text_editor::Action::Move(
-                    text_editor::Motion::DocumentStart,
-                ));
-                // Move to the right row
-                (0..line).for_each(|_| {
-                    self.content
-                        .perform(text_editor::Action::Move(text_editor::Motion::Down));
-                });
-
-                // Scroll to the right col
-                (0..col).for_each(|_| {
-                    self.content
-                        .perform(text_editor::Action::Move(text_editor::Motion::Right));
-                });
-
-                self.markdown_text = markdown::parse(&text).collect();
+                self.replace_content(&document);
             }
             Message::UpdateHostCursors(cursors) => {
                 self.user_cursors = cursors;
@@ -928,7 +905,6 @@ impl Editor {
                 client::Event::MessageReceived(message) => {
                     // Extract the message as a string
                     let message_text = message.as_str();
-                    // println!("Received: {}", message_text);
 
                     let parts: Vec<&str> = message_text.split(":").collect();
                     let mut iter = parts.into_iter();
@@ -937,7 +913,6 @@ impl Editor {
                             // Extract the part of the message that represents users data
                             if let Some(users_start) = message_text.find("Users:") {
                                 let users_data = &message_text[users_start + 6..]; // Skip "Users:"
-                                println!("Users data: {}", users_data);
 
                                 // Attempt to parse the users data into a Users struct (you'll need to know how it's formatted)
                                 if let Ok(users) = serde_json::from_str::<Users>(users_data.trim())
@@ -964,47 +939,26 @@ impl Editor {
                                 // Update the document content in the editor
                                 let server_doc =
                                     serde_json::from_str::<Document>(document_data.trim()).unwrap();
-                                let parsed_content = server_doc.buffer;
-                                let editor_content = self.content.text().to_string(); // Ensure both are strings
 
-                                // Debug logs to inspect the content comparison
-                                // println!("Current content: '{}'", editor_content);
-                                // println!("Parsed content: '{}'", parsed_content);
-                                // println!("Are they equal? {}", editor_content == parsed_content);
-                                // Optionally reposition the cursor
-                                let (line, col) = self.content.cursor_position();
-                                if editor_content != parsed_content {
-                                    self.content = text_editor::Content::with_text(&parsed_content);
-                                };
-
-                                // Start at the beginning
-                                self.content.perform(text_editor::Action::Move(
-                                    text_editor::Motion::DocumentStart,
-                                ));
-                                // Move to the right row
-                                (0..line).for_each(|_| {
-                                    self.content.perform(text_editor::Action::Move(
-                                        text_editor::Motion::Down,
-                                    ));
-                                });
-
-                                // Scroll to the right col
-                                (0..col).for_each(|_| {
-                                    self.content.perform(text_editor::Action::Move(
-                                        text_editor::Motion::Right,
-                                    ));
-                                });
-
-                                self.markdown_text = markdown::parse(&parsed_content).collect();
+                                self.replace_content(&server_doc);
 
                                 let doc_lock = self.document.clone();
                                 return Task::future(async move {
                                     let mut doc = doc_lock.lock().await;
-                                    doc.last_edit = server_doc.last_edit;
-                                    doc.buffer = parsed_content;
+                                    *doc = server_doc;
 
                                     Message::NoOp
                                 });
+                            }
+                        }
+                        Some("Id") => {
+                            // Extract the part of the message that represents the user's id
+                            if let Some(id_start) = message_text.find("Id:") {
+                                let id_data = &message_text[id_start + 3..]; // Skip "Id:"
+
+                                // Update the user's id
+                                let id = serde_json::from_str::<UserId>(id_data.trim()).unwrap();
+                                self.id = Some(id);
                             }
                         }
                         _ => {}
@@ -1069,10 +1023,12 @@ impl Editor {
                 self.joined_session = false;
                 self.client_state = State::Disconnected;
                 self.user_cursors.clear();
+                self.id = None;
             }
             Message::SessionClosed => {
                 println!("Server closed");
                 self.started_session = false;
+                self.id = None;
             }
             Message::CloseWindow(id) => {
                 println!("Window with id {:?} closed", id);
@@ -1096,6 +1052,33 @@ impl Editor {
         let line_height = 21.0; // Adjust as per your font size
 
         line as f32 * line_height
+    }
+
+    fn replace_content(&mut self, doc: &Document) {
+        if self.id == Some(doc.last_edit) {
+            return;
+        }
+
+        let (line, col) = self.content.cursor_position();
+        self.content = text_editor::Content::with_text(&doc.buffer);
+
+        // Start at the beginning
+        self.content.perform(text_editor::Action::Move(
+            text_editor::Motion::DocumentStart,
+        ));
+        // Move to the right row
+        (0..line).for_each(|_| {
+            self.content
+                .perform(text_editor::Action::Move(text_editor::Motion::Down));
+        });
+
+        // Scroll to the right col
+        (0..col).for_each(|_| {
+            self.content
+                .perform(text_editor::Action::Move(text_editor::Motion::Right));
+        });
+
+        self.markdown_text = markdown::parse(&doc.buffer).collect();
     }
 
     fn toggle_formatting(&mut self, format: TextStyle) -> Task<Message> {

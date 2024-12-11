@@ -195,13 +195,21 @@ async fn broadcast(
         let doc = state.document.lock().await;
         let mut users = state.users.lock().await;
         // Get the id of the user, if it does not exist, add it
-        users
+        let id = users
             .get_id(who)
             .unwrap_or_else(|| users.add_user(who, None)) as u64;
 
         let doc_json = serde_json::to_string(&*doc).unwrap();
         if sender
             .send(Message::Text(format!("Document: {}", doc_json)))
+            .await
+            .is_err()
+        {
+            return n_msg;
+        }
+
+        if sender
+            .send(Message::Text(format!("Id: {}", id)))
             .await
             .is_err()
         {
@@ -223,7 +231,6 @@ async fn broadcast(
 
     // Forward the broadcasts to the client
     while let Ok(msg) = rx.recv().await {
-        println!("Forwarding broadcast: {}", &msg);
         if sender.send(Message::Text(msg)).await.is_err() {
             break;
         }
@@ -262,21 +269,10 @@ async fn process_message(
                         let s = iter.collect::<Vec<&str>>().join(":");
                         match serde_json::from_str::<Insertion>(s.trim()) {
                             Ok(insertion) => {
-                                if let Some(_) = state.users.lock().await.get_id(who) {
+                                if let Some(id) = state.users.lock().await.get_id(who) {
                                     let mut doc = state.document.lock().await;
+                                    doc.last_edit = id;
                                     doc.insert(insertion.insert_at, insertion.clone().text);
-
-                                    state
-                                        .operations
-                                        .lock()
-                                        .await
-                                        .push(Operation::Insert(insertion.clone()));
-
-                                    state
-                                        .server_worker
-                                        .send(crate::editor::Input::Edit(doc.clone()))
-                                        .await
-                                        .unwrap();
 
                                     *state.is_dirty.lock().await = true;
                                 }
@@ -288,21 +284,10 @@ async fn process_message(
                         let s = iter.collect::<Vec<&str>>().join(":");
                         match serde_json::from_str::<Deletion>(s.trim()) {
                             Ok(deletion) => {
-                                if let Some(_) = state.users.lock().await.get_id(who) {
+                                if let Some(id) = state.users.lock().await.get_id(who) {
                                     let mut doc = state.document.lock().await;
+                                    doc.last_edit = id;
                                     doc.delete(deletion.clone().range);
-
-                                    state
-                                        .operations
-                                        .lock()
-                                        .await
-                                        .push(Operation::Delete(deletion.clone()));
-
-                                    state
-                                        .server_worker
-                                        .send(crate::editor::Input::Edit(doc.clone()))
-                                        .await
-                                        .unwrap();
 
                                     *state.is_dirty.lock().await = true;
                                 }
