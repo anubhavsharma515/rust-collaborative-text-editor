@@ -1,6 +1,6 @@
 use crate::{
     editor::CursorMarker,
-    server::{AppState, Deletion, Insertion, Operation},
+    server::{AppState, Deletion, Insertion},
 };
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use axum::{

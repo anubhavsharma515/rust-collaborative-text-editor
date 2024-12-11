@@ -1,3 +1,4 @@
+use axum::http::Request;
 use iced::futures;
 use iced::stream;
 use iced::widget::text;
@@ -9,16 +10,26 @@ use futures::stream::{Stream, StreamExt};
 use async_tungstenite::tungstenite;
 use std::fmt;
 
-pub fn connect() -> impl Stream<Item = Event> {
+pub fn connect(access: String, pass: String) -> impl Stream<Item = Event> {
     stream::channel(100, |mut output| async move {
         let mut state = State::Disconnected;
 
         loop {
             match &mut state {
                 State::Disconnected => {
-                    const ECHO_SERVER: &str = "ws://0.0.0.0:8080/edit";
+                    let url = format!("ws://0.0.0.0:8080/{}", access);
+                    let request = Request::builder()
+                        .uri(url)
+                        .header("AUTHORIZATION", pass.clone())
+                        .header("sec-websocket-key", "foo")
+                        .header("upgrade", "websocket")
+                        .header("host", "server.example.com")
+                        .header("connection", "upgrade")
+                        .header("sec-websocket-version", 13)
+                        .body(())
+                        .unwrap();
 
-                    match async_tungstenite::tokio::connect_async(ECHO_SERVER).await {
+                    match async_tungstenite::tokio::connect_async(request).await {
                         Ok((websocket, _)) => {
                             // Split the websocket into a channel for seding and receiving messages
                             let (sender, receiver) = mpsc::channel(100);

@@ -259,7 +259,14 @@ impl Editor {
                 _ => Message::NoOp,
             }),
             if self.joined_session {
-                Subscription::run(client::connect).map(Message::Echo)
+                Subscription::run_with_id(
+                    "id",
+                    client::connect(
+                        String::from("edit"),
+                        self.modal_content.session_password_input.clone(),
+                    ),
+                )
+                .map(Message::Echo)
             } else {
                 Subscription::none()
             },
