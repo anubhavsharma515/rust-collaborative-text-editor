@@ -8,6 +8,7 @@ use futures::sink::SinkExt;
 use futures::stream::{Stream, StreamExt};
 
 use async_tungstenite::tungstenite;
+use reqwest;
 use std::fmt;
 
 pub fn connect(access: String, pass: String) -> impl Stream<Item = Event> {
@@ -17,6 +18,16 @@ pub fn connect(access: String, pass: String) -> impl Stream<Item = Event> {
         loop {
             match &mut state {
                 State::Disconnected => {
+                    let status_endpoint = "http://0.0.0.0:8080/status";
+                    let client = reqwest::Client::new();
+
+                    let resp = client.get(status_endpoint).send().await;
+
+                    if resp.is_err() {
+                        let _ = output.send(Event::ServerDown).await;
+                        continue;
+                    }
+
                     let url = format!("ws://0.0.0.0:8080/{}", access);
                     let request = Request::builder()
                         .uri(url)
@@ -38,8 +49,19 @@ pub fn connect(access: String, pass: String) -> impl Stream<Item = Event> {
 
                             state = State::Connected(websocket, receiver);
                         }
-                        Err(_) => {
+                        //try and get more granular here with the event that's being fired back
+                        Err(err) => {
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            match err {
+                                tungstenite::Error::Http(code) => {
+                                    let status = code.status();
+                                    if status == 401 {
+                                        let _ = output.send(Event::IncorrectPassword).await;
+                                        continue;
+                                    }
+                                }
+                                _ => {}
+                            }
 
                             let _ = output.send(Event::Disconnected).await;
                         }
@@ -107,6 +129,8 @@ pub enum Event {
     Connected(Connection),
     Disconnected,
     MessageReceived(Message),
+    ServerDown,
+    IncorrectPassword, //Add a more granular variant that maps whether there's a success or failure
 }
 
 #[derive(Debug, Clone)]
