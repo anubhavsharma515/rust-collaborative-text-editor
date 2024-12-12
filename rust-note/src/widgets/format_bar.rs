@@ -50,13 +50,19 @@ impl FormatBar {
 
         let bold_button = format_bar_button(bold_icon(), "Bold", TextStyle::Bold);
         let italic_button = format_bar_button(italic_icon(), "Italic", TextStyle::Italic);
-        let strikethrough_button = format_bar_button(strikethrough_icon(), "Strikethrough", TextStyle::Strikethrough);
+        let strikethrough_button = format_bar_button(
+            strikethrough_icon(),
+            "Strikethrough",
+            TextStyle::Strikethrough,
+        );
 
         row![
             bold_button,
             italic_button,
             strikethrough_button,
-            container(text_size_icon(20)).align_x(Alignment::Center).align_y(Alignment::Center),
+            container(text_size_icon(20))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
             text_size_input
         ]
         .spacing(10)
@@ -70,7 +76,14 @@ fn format_bar_button<'a>(
     label: &'a str,
     on_press: TextStyle,
 ) -> Element<'a, TextStyle> {
-    tooltip(button(container(content).width(30).align_x(Alignment::Center)).on_press(on_press).padding(5), label, tooltip::Position::Top).into()
+    tooltip(
+        button(container(content).width(30).align_x(Alignment::Center))
+            .on_press(on_press)
+            .padding(5),
+        label,
+        tooltip::Position::Top,
+    )
+    .into()
 }
 
 fn bold_icon<'a>() -> Element<'a, TextStyle> {
@@ -89,8 +102,11 @@ fn text_size_icon<'a>(font_size: u16) -> Element<'a, TextStyle> {
     icon('\u{F088}', Some(font_size))
 }
 
-fn icon<'a> (unicode: char, font_size: Option<u16>) -> Element<'a, TextStyle> {
+fn icon<'a>(unicode: char, font_size: Option<u16>) -> Element<'a, TextStyle> {
     const ICON_FONT: Font = Font::with_name("format-bar-icons");
 
-    text(unicode).font(ICON_FONT).size(font_size.unwrap_or_else(|| DEFAULT_FONT_SIZE)).into()
+    text(unicode)
+        .font(ICON_FONT)
+        .size(font_size.unwrap_or_else(|| DEFAULT_FONT_SIZE))
+        .into()
 }

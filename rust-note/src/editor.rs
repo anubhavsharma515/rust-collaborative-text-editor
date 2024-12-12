@@ -912,6 +912,7 @@ impl Editor {
                                 // Update the document with loaded file contents
                                 let mut doc_lock = doc.lock().await;
                                 doc_lock.buffer = contents.to_string();
+                                // return Message::UpdateHostDoc(doc_lock.clone());
                             }
                             Err(err) => {
                                 // Handle file load error (log or return an error message)
@@ -929,7 +930,7 @@ impl Editor {
                         start_server(
                             read_password,
                             edit_password,
-                            doc,
+                            doc.clone(),
                             is_dirty_lock,
                             users_lock,
                             is_moved_lock,
@@ -937,7 +938,8 @@ impl Editor {
                         )
                         .await,
                     );
-                    Message::NoOp
+                    let dock_to_update = doc.lock().await.clone(); // Clone document for the update message
+                    Message::UpdateHostDoc(dock_to_update)
                 });
             }
             Message::UpdateHostDoc(document) => {
