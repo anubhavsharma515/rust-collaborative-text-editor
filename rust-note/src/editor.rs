@@ -29,7 +29,7 @@ use std::{
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use widgets::format_bar::{FormatBar, TextStyle, DEFAULT_FONT_SIZE};
-use widgets::menubar::{open_file, save_file, MenuBar, MenuMessage}; // For form parameters
+use widgets::menubar::{load_file, open_file, save_file, MenuBar, MenuMessage}; // For form parameters
 
 const BOLD_HOTKEY: &str = "b";
 const ITALIC_HOTKEY: &str = "i";
@@ -485,7 +485,7 @@ impl Editor {
                     .as_deref()
                     .and_then(Path::extension)
                     .and_then(ffi::OsStr::to_str)
-                    .unwrap_or("txt"),
+                    .unwrap_or("md"),
                 highlighter::Theme::SolarizedDark,
             )
             .wrapping(text::Wrapping::WordOrGlyph)
@@ -618,7 +618,18 @@ impl Editor {
                 let selection = self.content.selection().clone();
                 let id = self.id;
 
-                self.content.perform(action.clone());
+                if let Some(session_selection) = self.modal_content.session_selection {
+                    if connection.is_some() && session_selection == SessionType::Read {
+                        match action {
+                            text_editor::Action::Edit(_) => {}
+                            _ => self.content.perform(action.clone()),
+                        }
+                    } else {
+                        self.content.perform(action.clone());
+                    }
+                } else {
+                    self.content.perform(action.clone());
+                }
 
                 // Update markdown preview with the editor's text content
                 self.markdown_text = markdown::parse(&self.content.text()).collect();
@@ -871,6 +882,13 @@ impl Editor {
                 self.started_session = true;
 
                 let doc = self.document.clone();
+                // If a file path is provided, load the file
+                let file_path = self.modal_content.file_path_input.clone();
+                let load_file_task = if !file_path.is_empty() {
+                    Some(load_file(file_path.clone()))
+                } else {
+                    None
+                };
                 let is_dirty_lock = self.is_dirty.clone();
                 let read_password = if self.modal_content.read_password_input.is_empty() {
                     self.read_password.clone()
@@ -888,6 +906,20 @@ impl Editor {
                 let server_worker = self.server_worker.clone().unwrap();
                 self.id = Some(1);
                 return Task::future(async move {
+                    if let Some(load_task) = load_file_task {
+                        match load_task.await {
+                            Ok((_, contents)) => {
+                                // Update the document with loaded file contents
+                                let mut doc_lock = doc.lock().await;
+                                doc_lock.buffer = contents.to_string();
+                            }
+                            Err(err) => {
+                                // Handle file load error (log or return an error message)
+                                eprintln!("Failed to load file: {:?}", err);
+                                return Message::NoOp;
+                            }
+                        }
+                    }
                     let mut server_thread = server_thread_lock.lock().await;
                     users_lock.lock().await.add_user(
                         SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 8080),
