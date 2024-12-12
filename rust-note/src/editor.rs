@@ -9,8 +9,9 @@ use iced::{
     widget::{
         button,
         canvas::{self, Frame, Path as icedPath},
-        center, column, container, horizontal_space, markdown, mouse_area, opaque, row, scrollable,
-        stack, text, text_editor, text_input, toggler, Canvas, Container, Stack, Text, TextEditor,
+        center, column, container, horizontal_space, markdown, mouse_area, opaque, radio, row,
+        scrollable, stack, text, text_editor, text_input, toggler, Canvas, Container, Stack, Text,
+        TextEditor,
     },
     window, Alignment, Color, Element, Length, Pixels, Point, Rectangle, Renderer, Size,
     Subscription, Task, Theme,
@@ -20,7 +21,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    ffi,
+    ffi, fmt,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -38,40 +39,41 @@ const SESSION_MODAL_HOTKEY: &str = "n";
 
 #[derive(Clone)]
 pub struct SessionModal {
-    pub name_input: String,
     pub session_password_input: String,
     pub write_password_input: String,
     pub read_password_input: String,
     pub file_path_input: String,
-    pub name_error: String,
     pub file_error: String,
+    pub session_join_error: String,
+    pub session_selection: Option<SessionType>,
 }
 
 impl Default for SessionModal {
     fn default() -> Self {
         Self {
-            name_input: String::new(),
             session_password_input: String::new(),
             write_password_input: String::new(),
             read_password_input: String::new(),
             file_path_input: String::new(),
-            name_error: String::new(),
             file_error: String::new(),
+            session_join_error: String::new(),
+            session_selection: Some(SessionType::Read),
         }
     }
 }
 
 impl SessionModal {
-    pub fn validate_name(&mut self) -> bool {
-        if self.name_input.len() >= 5 {
-            self.name_error = "".to_string();
+    pub fn validate_password(&self) -> bool {
+        if self.read_password_input.is_empty() && self.write_password_input.len() >= 1 {
+            true
+        } else if self.read_password_input.len() >= 1 && self.write_password_input.is_empty() {
+            true
+        } else if self.read_password_input.len() >= 1 && self.write_password_input.len() >= 1 {
             true
         } else {
-            self.name_error = "Name must be at least 5 characters long.".to_string();
             false
         }
     }
-
     pub fn validate_file(&mut self) -> bool {
         if !&self.file_path_input.is_empty() {
             if self.file_path_input.ends_with(".md")
@@ -125,6 +127,22 @@ enum State {
     Connected(client::Connection),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionType {
+    Read,
+    Edit,
+}
+
+impl fmt::Display for SessionType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let value = match self {
+            SessionType::Read => "read",
+            SessionType::Edit => "edit",
+        };
+        write!(f, "{}", value)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Action(text_editor::Action),
@@ -137,7 +155,6 @@ pub enum Message {
     DeleteWord,
     ShortcutPaletteToggle,
     SessionModalToggle,
-    LoginNameChanged(String),
     SessionPasswordChanged(String),
     WritePasswordChanged(String),
     ReadPasswordChanged(String),
@@ -151,6 +168,7 @@ pub enum Message {
     RequestClose,
     LeaveSession,
     SessionClosed,
+    SessionTypeRequested(SessionType),
     CloseWindow(iced::window::Id),
     WorkerReady(mpsc::Sender<Input>),
 }
@@ -259,10 +277,12 @@ impl Editor {
                 _ => Message::NoOp,
             }),
             if self.joined_session {
+                let session_type_str = self.modal_content.session_selection.unwrap().to_string(); // Convert `SessionType` to `String` if `Some`
+
                 Subscription::run_with_id(
                     "id",
                     client::connect(
-                        String::from("edit"),
+                        session_type_str, // Pass the resolved string
                         self.modal_content.session_password_input.clone(),
                     ),
                 )
@@ -358,16 +378,6 @@ impl Editor {
                         TabId::StartSession,
                         TabLabel::Text(String::from("Start Session")),
                         column![
-                            text_input("Enter your name", &self.modal_content.name_input)
-                                .on_input(Message::LoginNameChanged)
-                                .padding(5),
-                            if self.modal_content.name_input.len() < 5 {
-                                text("Name must be at least 5 characters long")
-                                    .size(14)
-                                    .color([1.0, 0.0, 0.0])
-                            } else {
-                                text("").size(14)
-                            },
                             text_input(
                                 "Enter file path (optional)",
                                 &self.modal_content.file_path_input.clone()
@@ -397,10 +407,10 @@ impl Editor {
                             ],
                             {
                                 let mut button = button("Start Session").style(button::secondary);
-                                if self.modal_content.name_input.len() >= 5
+                                if self.modal_content.validate_password()
                                     && ((!self.modal_content.file_path_input.clone().is_empty()
                                         && self.modal_content.clone().validate_file())
-                                        || (self.modal_content.file_path_input.clone().is_empty()))
+                                        || self.modal_content.file_path_input.clone().is_empty())
                                 {
                                     button = button
                                         .on_press(Message::StartSessionPressed)
@@ -416,31 +426,43 @@ impl Editor {
                         TabId::JoinSession,
                         TabLabel::Text(String::from("Join Session")),
                         column![
-                            text_input("Enter your name", &self.modal_content.name_input)
-                                .on_input(Message::LoginNameChanged)
-                                .padding(5),
-                            if self.modal_content.name_input.len() < 5 {
-                                text("Name must be at least 5 characters long")
-                                    .size(14)
-                                    .color([1.0, 0.0, 0.0])
-                            } else {
-                                text("").size(14)
-                            },
                             text_input(
                                 "Enter session password",
                                 &self.modal_content.session_password_input
                             )
                             .on_input(Message::SessionPasswordChanged)
                             .padding(5),
+                            row![
+                                radio(
+                                    "Read Session",
+                                    SessionType::Read,
+                                    self.modal_content.session_selection,
+                                    Message::SessionTypeRequested
+                                ),
+                                radio(
+                                    "Write Session",
+                                    SessionType::Edit,
+                                    self.modal_content.session_selection,
+                                    Message::SessionTypeRequested
+                                ),
+                            ]
+                            .spacing(10),
                             {
                                 let mut button = button("Join Session").style(button::secondary);
-                                if self.modal_content.name_input.len() >= 5 {
+                                if self.modal_content.session_password_input.len() > 0 {
                                     button = button
                                         .on_press(Message::JoinSessionPressed)
                                         .style(button::primary);
                                 }
                                 button
-                            }
+                            },
+                            if !self.modal_content.session_join_error.is_empty() {
+                                text(&self.modal_content.session_join_error)
+                                    .size(14)
+                                    .color([1.0, 0.0, 0.0])
+                            } else {
+                                text("").size(14)
+                            },
                         ]
                         .spacing(10)
                         .padding(10)
@@ -714,10 +736,10 @@ impl Editor {
                             Message::NoOp
                         }));
                     }
+                    text_editor::Action::Scroll { lines } => return Task::done(Message::NoOp),
                     _ => tasks.push(Task::done(Message::NoOp)),
                 }
 
-                // Update cursor positions
                 let line = self.cursor_position_in_pixels();
                 self.cursor_marker.move_cursor(line);
                 let cursor_marker = self.cursor_marker.clone();
@@ -766,6 +788,13 @@ impl Editor {
                             self.content = text_editor::Content::with_text(&contents);
                             self.markdown_text = markdown::parse(&self.content.text()).collect();
                             println!("File loaded: {:?}", path);
+                            let document = self.document.clone();
+                            let content = self.content.text().clone();
+                            return Task::future(async move {
+                                let mut doc_lock = document.lock().await;
+                                doc_lock.buffer = content;
+                                Message::NoOp
+                            });
                         }
                     }
                     MenuMessage::OpenFile => {
@@ -887,8 +916,20 @@ impl Editor {
                 self.user_cursors = cursors;
             }
             Message::Echo(event) => match event {
+                client::Event::ServerDown => {
+                    self.joined_session = false;
+                    self.modal_content.session_join_error =
+                        "Server is down, please contact host.".to_string();
+                }
+                client::Event::IncorrectPassword => {
+                    self.joined_session = false;
+                    self.modal_content.session_join_error =
+                        "Incorrect password, please try again.".to_string();
+                }
                 client::Event::Connected(connection) => {
                     self.client_state = State::Connected(connection.clone());
+                    self.joined_session = true;
+                    self.session_modal_open = false;
 
                     let line = self.cursor_position_in_pixels();
 
@@ -981,20 +1022,17 @@ impl Editor {
             Message::SessionPasswordChanged(password) => {
                 self.modal_content.session_password_input = password;
             }
+            Message::SessionTypeRequested(choice) => {
+                self.modal_content.session_selection = Some(choice);
+            }
             Message::JoinSessionPressed => {
                 self.joined_session = true;
-                self.session_modal_open = !self.session_modal_open;
             }
             Message::SessionModalToggle => {
                 self.session_modal_open = !self.session_modal_open;
-                self.modal_content.name_input.clear();
             }
             Message::TabSelected(selected) => {
                 self.active_tab = selected;
-            }
-            Message::LoginNameChanged(name) => {
-                self.modal_content.name_input = name;
-                self.modal_content.validate_name();
             }
             Message::FilePathChanged(file_path) => {
                 self.modal_content.file_path_input = file_path;
