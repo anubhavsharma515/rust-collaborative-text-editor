@@ -747,7 +747,7 @@ impl Editor {
                             Message::NoOp
                         }));
                     }
-                    text_editor::Action::Scroll { lines } => return Task::done(Message::NoOp),
+                    text_editor::Action::Scroll { lines: _ } => return Task::done(Message::NoOp),
                     _ => tasks.push(Task::done(Message::NoOp)),
                 }
 
