@@ -154,19 +154,20 @@ The application includes a shortcut palette to help users quickly access common 
 
 | Action                    | Shortcut Key        |
 |---------------------------|---------------------|
-| **Bold**                  | `Ctrl + X`          |
-| **Italic**                | `Ctrl + C`          |
-| **Strikethrough**         | `Ctrl + V`          |
-| **Delete word**           | `Ctrl + W`          |
-| **Delete line**           | `Ctrl + Y`          |
-| **Toggle shortcut palette**| `Ctrl + K`         |
-| **Toggle session modal ** | `Ctrl + M`          |
-| **Open file**             | `Command + O`       |
+| **Bold**                    | `Cmd + b`                 |
+| **Italic**                  | `Cmd + i`                 |
+| **Strikethrough**           | `Cmd + f`                 |
+| **Delete word**             | `Cmd + option + backspace`|
+| **Delete line**             | `Cmd + backspace`         |
+| **Toggle shortcut palette** | `Cmd + p`                 |
+| **Toggle session modal**   | `Cmd + n`                  |
+| **Open file**               | `Cmd + o`                 |
+| **Save file**               | `Cmd + s`                 |
 
 ---
 
 ### Status Bar
-The status bar provides real-time information about the current session, such as the number of characters, words, and lines in the document.
+The status bar provides real-time information about the current session, such as the number of words, lines and current cursor position.
 
 ---
 
@@ -178,8 +179,8 @@ The status bar provides real-time information about the current session, such as
 ### Steps to Set Up and Run
 1. **Clone the Repository:**
    ```bash
-   git clone <repository-url>
-   cd <repository-name>
+   git clone https://github.com/anubhavsharma515/rust-collaborative-text-editor.git
+   cd rust-collaborative-text-editor
    ```
 
 2. **CD into the Project Directory:**
@@ -244,6 +245,7 @@ The status bar provides real-time information about the current session, such as
 
 - **Jesse**:
     - Implemented **WebSocket Channels** in the server, where each connected client operates on a separate thread.
+    - Designed data structure to receive, send and display all active user cursor positions and document updates to host and other connected clients.
     - Broadcasted the host’s file state and cursor positions to all connected clients in real-time.
 
 - **Anubhav**:
