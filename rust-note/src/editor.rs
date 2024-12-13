@@ -545,7 +545,14 @@ impl Editor {
 
         let content = column![
             row![
-                self.menubar.view().map(Message::Menu),
+                self.menubar
+                    .view(if let State::Connected(_) = self.client_state {
+                        // Use `connection` here
+                        true
+                    } else {
+                        false
+                    })
+                    .map(Message::Menu),
                 toggler(self.markdown_preview_open)
                     .label("Show Markdown preview")
                     .on_toggle(Message::ShowMarkdownPreview)

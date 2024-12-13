@@ -65,10 +65,14 @@ impl MenuBar {
         }
     }
 
-    pub fn view(&self) -> Element<MenuMessage> {
-        let file_picker = button("Open File")
-            .on_press(MenuMessage::OpenFile)
-            .padding(5);
+    pub fn view(&self, disable_open_file: bool) -> Element<MenuMessage> {
+        let file_picker = if disable_open_file {
+            button("Open File").padding(5)
+        } else {
+            button("Open File")
+                .on_press(MenuMessage::OpenFile)
+                .padding(5)
+        };
         let file_save = button("Save File")
             .on_press(MenuMessage::SaveFile)
             .padding(5);
