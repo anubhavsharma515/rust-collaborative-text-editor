@@ -546,12 +546,15 @@ impl Editor {
         let content = column![
             row![
                 self.menubar
-                    .view(if let State::Connected(_) = self.client_state {
-                        // Use `connection` here
-                        true
-                    } else {
-                        false
-                    })
+                    .view(
+                        self.theme.clone(),
+                        if let State::Connected(_) = self.client_state {
+                            // Use `connection` here
+                            true
+                        } else {
+                            false
+                        }
+                    )
                     .map(Message::Menu),
                 toggler(self.markdown_preview_open)
                     .label("Show Markdown preview")
@@ -793,42 +796,52 @@ impl Editor {
 
                 return Task::batch(tasks);
             }
-            Message::Menu(menu_msg) => {
-                let _ = self.menubar.update(menu_msg.clone());
-
-                match menu_msg {
-                    MenuMessage::ThemeSelected(theme) => {
-                        self.theme = theme;
-                    }
-                    MenuMessage::FileOpened(result) => {
-                        if let Ok((path, contents)) = result {
-                            self.file = Some(path.clone());
-                            self.content = text_editor::Content::with_text(&contents);
-                            self.markdown_text = markdown::parse(&self.content.text()).collect();
-                            println!("File loaded: {:?}", path);
-                            let document = self.document.clone();
-                            let content = self.content.text().clone();
-                            return Task::future(async move {
-                                let mut doc_lock = document.lock().await;
-                                doc_lock.buffer = content;
-                                Message::NoOp
-                            });
-                        }
-                    }
-                    MenuMessage::OpenFile => {
-                        return Task::perform(open_file(), MenuMessage::FileOpened)
-                            .map(Message::Menu);
-                    }
-                    MenuMessage::FileSaved(_) => {}
-                    MenuMessage::SaveFile => {
-                        return Task::perform(
-                            save_file(self.file.clone(), self.content.text()),
-                            MenuMessage::FileSaved,
-                        )
-                        .map(|_| Message::NoOp);
-                    }
+            Message::Menu(menu_msg) => match menu_msg {
+                MenuMessage::ThemeSelected(theme) => {
+                    self.theme = theme;
                 }
-            }
+                MenuMessage::FileOpened(result) => match result {
+                    Ok((path, contents)) => {
+                        self.file = Some(path.clone());
+                        self.content = text_editor::Content::with_text(&contents);
+                        self.markdown_text = markdown::parse(&self.content.text()).collect();
+                        println!("File loaded: {:?}", path);
+
+                        let document = self.document.clone();
+                        let content = self.content.text().clone();
+                        return Task::future(async move {
+                            let mut doc_lock = document.lock().await;
+                            doc_lock.buffer = content;
+                            Message::NoOp
+                        });
+                    }
+                    Err(error) => {
+                        println!("Failed to open file: {:?}", error);
+                        // Handle error by showing an error message to the user or logging
+                        self.content = text_editor::Content::with_text("Error loading file.");
+                    }
+                },
+                MenuMessage::OpenFile => {
+                    return Task::perform(open_file(), MenuMessage::FileOpened).map(Message::Menu);
+                }
+                MenuMessage::FileSaved(result) => match result {
+                    Ok(path) => {
+                        println!("File saved at: {}", path.display());
+                    }
+                    Err(error) => {
+                        println!("Failed to save file: {:?}", error);
+                        // Handle error by showing a failure message to the user
+                        self.content = text_editor::Content::with_text("Error saving file.");
+                    }
+                },
+                MenuMessage::SaveFile => {
+                    return Task::perform(
+                        save_file(self.file.clone(), self.content.text()),
+                        MenuMessage::FileSaved,
+                    )
+                    .map(Message::Menu);
+                }
+            },
             Message::Format(text_style) => {
                 let _ = self.format_bar.update(text_style.clone()); // Update the format bar UI
 

@@ -81,7 +81,7 @@ fn format_bar_button<'a>(
             .on_press(on_press)
             .padding(5),
         label,
-        tooltip::Position::Top,
+        tooltip::Position::Bottom,
     )
     .into()
 }

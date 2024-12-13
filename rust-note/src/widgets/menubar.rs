@@ -1,71 +1,26 @@
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use iced::widget::{button, pick_list, row};
-use iced::{Alignment, Element, Length, Task, Theme};
+use iced::{Alignment, Element, Length, Theme};
 
 #[derive(Debug, Clone)]
 pub enum MenuMessage {
     ThemeSelected(Theme),
     OpenFile,
-    FileOpened(Result<(PathBuf, Arc<String>), Error>),
+    FileOpened(Result<(PathBuf, Arc<String>), String>),
     SaveFile,
-    FileSaved(Result<PathBuf, Error>),
+    FileSaved(Result<PathBuf, String>),
 }
 
-pub struct MenuBar {
-    selected_theme: Theme,
-    file: Option<PathBuf>,
-    content: Arc<String>,
-    is_loading: bool,
-    is_dirty: bool,
-}
+pub struct MenuBar;
 
 impl MenuBar {
     pub fn new() -> Self {
-        Self {
-            selected_theme: Theme::default(),
-            file: None,
-            content: Arc::new(String::new()),
-            is_loading: true,
-            is_dirty: false,
-        }
+        Self {}
     }
 
-    pub fn update(&mut self, message: MenuMessage) -> Task<MenuMessage> {
-        match message {
-            MenuMessage::ThemeSelected(theme) => {
-                self.selected_theme = theme.clone();
-                println!("Theme selected: {:?}", theme);
-
-                Task::none()
-            }
-            MenuMessage::OpenFile => {
-                if self.is_loading {
-                    Task::none()
-                } else {
-                    self.is_loading = true;
-                    Task::perform(open_file(), MenuMessage::FileOpened)
-                }
-            }
-            MenuMessage::FileOpened(result) => {
-                self.is_loading = false;
-                self.is_dirty = false;
-
-                if let Ok((path, contents)) = result {
-                    self.file = Some(path);
-                    self.content = contents;
-                }
-
-                Task::none()
-            }
-            MenuMessage::SaveFile => Task::none(),
-            MenuMessage::FileSaved(_) => Task::none(),
-        }
-    }
-
-    pub fn view(&self, disable_open_file: bool) -> Element<MenuMessage> {
+    pub fn view(&self, theme: Theme, disable_open_file: bool) -> Element<MenuMessage> {
         let file_picker = if disable_open_file {
             button("Open File").padding(5)
         } else {
@@ -77,13 +32,9 @@ impl MenuBar {
             .on_press(MenuMessage::SaveFile)
             .padding(5);
 
-        let theme_selector = pick_list(
-            Theme::ALL,
-            Some(&self.selected_theme),
-            MenuMessage::ThemeSelected,
-        )
-        .width(Length::Shrink)
-        .padding(5);
+        let theme_selector = pick_list(Theme::ALL, Some(theme), MenuMessage::ThemeSelected)
+            .width(Length::Shrink)
+            .padding(5);
 
         row![file_picker, file_save, theme_selector]
             .spacing(10)
@@ -92,35 +43,32 @@ impl MenuBar {
     }
 }
 
-#[derive(Debug, Clone)]
-pub enum Error {
-    DialogClosed,
-    IoError(io::ErrorKind),
-}
-
-pub async fn open_file() -> Result<(PathBuf, Arc<String>), Error> {
+pub async fn open_file() -> Result<(PathBuf, Arc<String>), String> {
     let picked_file = rfd::AsyncFileDialog::new()
         .set_title("Open a text file...")
-        .add_filter("Text Files", &["md"])
+        .add_filter("Text Files", &["md", "txt"])
         .pick_file()
         .await
-        .ok_or(Error::DialogClosed)?;
+        .ok_or_else(|| "File dialog closed without selection.".to_string())?;
 
-    load_file(picked_file).await
+    load_file(picked_file)
+        .await
+        .map_err(|_| "File dialog was closed.".to_string())
 }
 
-pub async fn load_file(path: impl Into<PathBuf>) -> Result<(PathBuf, Arc<String>), Error> {
+pub async fn load_file(path: impl Into<PathBuf>) -> Result<(PathBuf, Arc<String>), String> {
     let path = path.into();
 
     let contents = tokio::fs::read_to_string(&path)
         .await
         .map(Arc::new)
-        .map_err(|error| Error::IoError(error.kind()))?;
+        .map_err(|err| format!("IO error reading file: {}", err))?; // Convert error to a simple string
 
+    println!("File loaded successfully from: {}", path.display()); // Log successful load
     Ok((path, contents))
 }
 
-pub async fn save_file(path: Option<PathBuf>, contents: String) -> Result<PathBuf, Error> {
+pub async fn save_file(path: Option<PathBuf>, contents: String) -> Result<PathBuf, String> {
     let path = if let Some(path) = path {
         path
     } else {
@@ -130,12 +78,13 @@ pub async fn save_file(path: Option<PathBuf>, contents: String) -> Result<PathBu
             .as_ref()
             .map(rfd::FileHandle::path)
             .map(Path::to_owned)
-            .ok_or(Error::DialogClosed)?
+            .ok_or_else(|| "Save file dialog was closed without selection.".to_string())?
     };
 
     tokio::fs::write(&path, contents)
         .await
-        .map_err(|error| Error::IoError(error.kind()))?;
+        .map_err(|err| format!("Failed to write file: {}", err))?; // Convert error to a simple string
 
+    println!("File saved successfully at: {}", path.display()); // Log successful save
     Ok(path)
 }
