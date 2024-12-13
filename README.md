@@ -107,12 +107,17 @@ This is an interactive terminal-based application, not a crate. To use the tool,
 2. **Edit Text**: Use the interface to type, modify, or delete markdown content.
 3. **Preview Mode**: Toggle between editing and preview modes to see the rendered markdown.
 4. **Font Size Control**: Modify the font size of the preview section for better readability.
+5. **Text analaysis**: Use the status bar provides real-time information about the current session, such as the number of words, lines and current cursor position.
+
+![MarkdownEditorGIF](assets/markdown_editor.gif)
 
 ---
 
 ### File Management
 - **Open File**: Use the `Open File` button to load an existing markdown file for editing.
 - **Save File**: Save your work using the `Save File` button during the session.
+
+![FileManagementGIF](assets/file_management.gif)
 
 ---
 
@@ -135,16 +140,20 @@ This is an interactive terminal-based application, not a crate. To use the tool,
    - Once the server is running, share the **session URL** with your collaborators. They can use this URL to join the session as either read-only or read/write clients, depending on the permissions you set for them.
    - All changes made by any user will be reflected in real time for all connected users.
 
+![CollaborationGIF](assets/collab.gif)
+
 ---
 
 ### Theme Management
 1. **Theme Selection**: Customize the editor by choosing a theme from the dropdown menu in the toolbar.
 2. **Dynamic Adjustment**: The selected theme immediately updates the editor and preview section for a personalized experience.
 
+![ThemeManagementGIF](assets/theme_selection.gif)
+
 ---
 
 ### Shortcut Palette
-The application includes a shortcut palette to help users quickly access common features, which is togggered by pressing `Ctrl + K`.
+The application includes a shortcut palette to help users quickly access common features, which is togggered by pressing `Cmd + K`.
 
 **Screenshot of the Shortcut Palette:**
 
@@ -164,10 +173,8 @@ The application includes a shortcut palette to help users quickly access common 
 | **Open file**               | `Cmd + o`                 |
 | **Save file**               | `Cmd + s`                 |
 
----
 
-### Status Bar
-The status bar provides real-time information about the current session, such as the number of words, lines and current cursor position.
+![ShortcutPaletteGIF](assets/shortcut_modal.gif)
 
 ---
 
