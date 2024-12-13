@@ -14,5 +14,5 @@ pub async fn main() -> iced::Result {
         .theme(Editor::theme)
         .exit_on_close_request(false)
         .subscription(Editor::subscription)
-        .run_with(move || Editor::new())
+        .run_with(Editor::new)
 }

@@ -8,7 +8,6 @@ use futures::sink::SinkExt;
 use futures::stream::{Stream, StreamExt};
 
 use async_tungstenite::tungstenite;
-use reqwest;
 use std::fmt;
 
 pub fn connect(access: String, pass: String) -> impl Stream<Item = Event> {
@@ -52,15 +51,12 @@ pub fn connect(access: String, pass: String) -> impl Stream<Item = Event> {
                         //try and get more granular here with the event that's being fired back
                         Err(err) => {
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                            match err {
-                                tungstenite::Error::Http(code) => {
-                                    let status = code.status();
-                                    if status == 401 {
-                                        let _ = output.send(Event::IncorrectPassword).await;
-                                        continue;
-                                    }
+                            if let tungstenite::Error::Http(code) = err {
+                                let status = code.status();
+                                if status == 401 {
+                                    let _ = output.send(Event::IncorrectPassword).await;
+                                    continue;
                                 }
-                                _ => {}
                             }
 
                             let _ = output.send(Event::Disconnected).await;

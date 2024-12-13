@@ -56,7 +56,7 @@ impl Users {
     pub fn get_all_cursors(&self) -> Vec<CursorMarker> {
         self.user_map
             .values()
-            .filter_map(|user| user.cursor.clone())
+            .filter_map(|user| user.cursor)
             .collect()
     }
 
@@ -161,8 +161,8 @@ pub async fn start_server(
     is_moved: Arc<Mutex<bool>>,
     server_worker: mpsc::Sender<Input>,
 ) -> JoinHandle<()> {
-    let read_access_hash = read_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
-    let write_access_hash = write_access_pass.and_then(|pass| Some(generate_password_hash(pass)));
+    let read_access_hash = read_access_pass.map(generate_password_hash);
+    let write_access_hash = write_access_pass.map(generate_password_hash);
     let (tx, _rx) = broadcast::channel(100);
 
     let state = AppState {
