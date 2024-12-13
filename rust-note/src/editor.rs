@@ -36,6 +36,7 @@ const ITALIC_HOTKEY: &str = "i";
 const STRIKETHROUGH_HOTKEY: &str = "f";
 const SHORTCUT_PALETTE_HOTKEY: &str = "p";
 const SESSION_MODAL_HOTKEY: &str = "n";
+const OPEN_FILE_HOTKEY: &str = "o";
 
 #[derive(Clone)]
 pub struct SessionModal {
@@ -511,6 +512,11 @@ impl Editor {
                 keyboard::Key::Character(SESSION_MODAL_HOTKEY) if key_press.modifiers.command() => {
                     Some(text_editor::Binding::Custom(Message::SessionModalToggle))
                 }
+                keyboard::Key::Character(OPEN_FILE_HOTKEY) if key_press.modifiers.command() => {
+                    Some(text_editor::Binding::Custom(Message::Menu(
+                        MenuMessage::OpenFile,
+                    )))
+                }
                 _ => text_editor::Binding::from_key_press(key_press),
             });
 
@@ -804,8 +810,7 @@ impl Editor {
                     }
                     Err(error) => {
                         println!("Failed to open file: {:?}", error);
-                        // Handle error by showing an error message to the user or logging
-                        self.content = text_editor::Content::with_text("Error loading file.");
+                        return Task::done(Message::NoOp);
                     }
                 },
                 MenuMessage::OpenFile => {
@@ -817,8 +822,7 @@ impl Editor {
                     }
                     Err(error) => {
                         println!("Failed to save file: {:?}", error);
-                        // Handle error by showing a failure message to the user
-                        self.content = text_editor::Content::with_text("Error saving file.");
+                        return Task::done(Message::NoOp);
                     }
                 },
                 MenuMessage::SaveFile => {
