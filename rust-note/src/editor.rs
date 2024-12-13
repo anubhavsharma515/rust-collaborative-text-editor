@@ -541,8 +541,6 @@ impl Editor {
         stack_elements.push(editor.into());
         stack_elements.append(&mut marker_elements);
 
-        // println!("Marker elements: {:?}", marker_elements);
-
         let content = column![
             row![
                 self.menubar
@@ -732,7 +730,6 @@ impl Editor {
 
                             for op in operations.iter() {
                                 if let Some(conn) = connection.as_mut() {
-                                    println!("Sending edit request...");
                                     match op {
                                         Operation::Insert(insertion) => {
                                             conn.send(client::Message::User(format!(
@@ -863,7 +860,7 @@ impl Editor {
                 };
             }
             Message::LinkClicked(url) => {
-                println!("Link clicked: {}", url);
+                let _ = open::that(url.to_string());
             }
             Message::NoOp => {}
             Message::DeleteLine => {
