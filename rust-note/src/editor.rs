@@ -64,16 +64,9 @@ impl Default for SessionModal {
 
 impl SessionModal {
     pub fn validate_password(&self) -> bool {
-        if self.read_password_input.is_empty() && self.write_password_input.len() >= 1 {
-            true
-        } else if self.read_password_input.len() >= 1 && self.write_password_input.is_empty() {
-            true
-        } else if self.read_password_input.len() >= 1 && self.write_password_input.len() >= 1 {
-            true
-        } else {
-            false
-        }
+        !(self.read_password_input.is_empty() && self.write_password_input.is_empty())
     }
+
     pub fn validate_file(&mut self) -> bool {
         if !&self.file_path_input.is_empty() {
             if self.file_path_input.ends_with(".md")
@@ -297,9 +290,6 @@ impl Editor {
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let mut markdown_settings = markdown::Settings::default();
-        markdown_settings.text_size = iced::Pixels(50.0);
-
         let status = row![
             {
                 let button = if self.started_session {
@@ -449,7 +439,7 @@ impl Editor {
                             .spacing(10),
                             {
                                 let mut button = button("Join Session").style(button::secondary);
-                                if self.modal_content.session_password_input.len() > 0 {
+                                if !self.modal_content.session_password_input.is_empty() {
                                     button = button
                                         .on_press(Message::JoinSessionPressed)
                                         .style(button::primary);
@@ -621,7 +611,7 @@ impl Editor {
                 };
 
                 let content_text = self.content.text();
-                let mut index = running_sum_vec.get(x).unwrap().clone() + y;
+                let mut index = *running_sum_vec.get(x).unwrap() + y;
 
                 let doc_lock = self.document.clone();
                 let is_dirty_lock = self.is_dirty.clone();
@@ -684,7 +674,7 @@ impl Editor {
                                     let mut text = ch.to_string();
 
                                     if is_blank_line && !doc.check_newline_at(index) {
-                                        text.push_str("\n"); // Insert newline after character
+                                        text.push('\n'); // Insert newline after character
                                     }
 
                                     let insertion = doc.insert(index, text.clone());
@@ -694,7 +684,7 @@ impl Editor {
                                     let mut text = text.to_string();
 
                                     if is_blank_line && !doc.check_newline_at(index) {
-                                        text.push_str("\n"); // Insert newline after string
+                                        text.push('\n'); // Insert newline after string
                                     }
 
                                     let insertion = doc.insert(index, text);
@@ -749,7 +739,7 @@ impl Editor {
                                     }
                                 }
                             }
-                            if let Some(_) = connection {
+                            if connection.is_some() {
                                 operations.clear();
                             }
                             *is_dirty_lock.lock().await = true;
@@ -763,7 +753,7 @@ impl Editor {
 
                 let line = self.cursor_position_in_pixels();
                 self.cursor_marker.move_cursor(line);
-                let cursor_marker = self.cursor_marker.clone();
+                let cursor_marker = self.cursor_marker;
 
                 // Check if the user is connected to a session
                 if let State::Connected(ref mut connection) = self.client_state {

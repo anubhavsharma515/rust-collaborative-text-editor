@@ -32,14 +32,14 @@ pub async fn auth(
                 return Ok(next.run(req).await);
             }
 
-            PasswordHash::new(&state.read_access_hash.as_ref().unwrap()).unwrap()
+            PasswordHash::new(state.read_access_hash.as_ref().unwrap()).unwrap()
         }
         "/edit" => {
             if state.write_access_hash.is_none() {
                 return Ok(next.run(req).await);
             }
 
-            PasswordHash::new(&state.write_access_hash.as_ref().unwrap()).unwrap()
+            PasswordHash::new(state.write_access_hash.as_ref().unwrap()).unwrap()
         }
         _ => return Ok(next.run(req).await),
     };

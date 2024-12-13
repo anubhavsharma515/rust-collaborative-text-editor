@@ -107,6 +107,6 @@ fn icon<'a>(unicode: char, font_size: Option<u16>) -> Element<'a, TextStyle> {
 
     text(unicode)
         .font(ICON_FONT)
-        .size(font_size.unwrap_or_else(|| DEFAULT_FONT_SIZE))
+        .size(font_size.unwrap_or(DEFAULT_FONT_SIZE))
         .into()
 }
