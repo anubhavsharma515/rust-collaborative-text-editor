@@ -37,6 +37,7 @@ const STRIKETHROUGH_HOTKEY: &str = "f";
 const SHORTCUT_PALETTE_HOTKEY: &str = "p";
 const SESSION_MODAL_HOTKEY: &str = "n";
 const OPEN_FILE_HOTKEY: &str = "o";
+const SAVE_FILE_HOTKEY: &str = "s";
 
 #[derive(Clone)]
 pub struct SessionModal {
@@ -352,6 +353,8 @@ impl Editor {
                     Text::new(format!(
                         "cmd + {SESSION_MODAL_HOTKEY}: Toggle session modal"
                     )),
+                    Text::new(format!("cmd + {OPEN_FILE_HOTKEY}: Open file")),
+                    Text::new(format!("cmd + {SAVE_FILE_HOTKEY}: Save file")),
                 ]
                 .spacing(10)
             ]
@@ -515,6 +518,11 @@ impl Editor {
                 keyboard::Key::Character(OPEN_FILE_HOTKEY) if key_press.modifiers.command() => {
                     Some(text_editor::Binding::Custom(Message::Menu(
                         MenuMessage::OpenFile,
+                    )))
+                }
+                keyboard::Key::Character(SAVE_FILE_HOTKEY) if key_press.modifiers.command() => {
+                    Some(text_editor::Binding::Custom(Message::Menu(
+                        MenuMessage::SaveFile,
                     )))
                 }
                 _ => text_editor::Binding::from_key_press(key_press),

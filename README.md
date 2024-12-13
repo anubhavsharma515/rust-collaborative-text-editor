@@ -107,8 +107,6 @@ This is an interactive terminal-based application, not a crate. To use the tool,
 2. **Edit Text**: Use the interface to type, modify, or delete markdown content.
 3. **Preview Mode**: Toggle between editing and preview modes to see the rendered markdown.
 4. **Font Size Control**: Modify the font size of the preview section for better readability.
-   - **Increase Font Size**: Use the shortcut `Ctrl + +` or the toolbar to increase the font size.
-   - **Decrease Font Size**: Use the shortcut `Ctrl + -` or the toolbar to decrease the font size.
 
 ---
 
