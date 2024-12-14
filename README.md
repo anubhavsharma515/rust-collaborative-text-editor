@@ -6,7 +6,7 @@
 **Team Members:**
 - **Jesse Na**
   - **Student Number:** 1005890788
-  - **Preferred Email Address:** [Partner's Email]
+  - **Preferred Email Address:** jesse.na@mail.utoronto.ca
 
 - **Anubhav Sharma**
   - **Student Number:** 1004541659
@@ -69,7 +69,7 @@ This mechanism enforces exclusive editing for individual lines, preventing users
 This compromise ensures document consistency and avoids merge conflicts, balancing the need for real-time collaboration with technical feasibility.
 
 By leveraging Rust’s strengths in performance, safety, and concurrency, this project delivers a responsive and robust terminal application.
-While the initial CRDT-based vision encountered obstacles, this experience provided valuable insights that are further discussed in the (Lessons Learned)[#lessons-learned-and-concluding-remarks] section.
+While the initial CRDT-based vision encountered obstacles, this experience provided valuable insights that are further discussed in the [Lessons Learned](#lessons-learned-and-concluding-remarks) section.
 This project lays the groundwork for future enhancements, including syntax-aware editing and more sophisticated collaborative features, making it a powerful tool for technical users who prefer terminal environments over GUI or web-based solutions.
 
 ---
@@ -98,7 +98,7 @@ Future iterations of the tool may revisit CRDT-based editing to expand its funct
 ## User's Guide
 
 ### Introduction
-This is an interactive terminal-based application, not a crate. To use the tool, follow the steps in the Reproducibility Guide to build and start the application.
+This is an interactive terminal-based application, not a crate. To build the executable and run the tool, follow the steps in the Reproducibility Guide to build and start the application.
 
 ---
 
@@ -107,14 +107,14 @@ This is an interactive terminal-based application, not a crate. To use the tool,
 2. **Edit Text**: Use the interface to type, modify, or delete markdown content.
 3. **Preview Mode**: Toggle between editing and preview modes to see the rendered markdown.
 4. **Font Size Control**: Modify the font size of the preview section for better readability.
-5. **Text analaysis**: Use the status bar provides real-time information about the current session, such as the number of words, lines and current cursor position.
+5. **Text analaysis**: The status bar at the bottom right corner provides real-time information about the current session, such as the number of words, lines and current cursor position.
 
 ![MarkdownEditorGIF](assets/markdown_editor.gif)
 
 ---
 
 ### File Management
-- **Open File**: Use the `Open File` button to load an existing markdown file for editing.
+- **Open File**: Click the `Open File` button to load an existing markdown file for editing.
 - **Save File**: Save your work using the `Save File` button during the session.
 
 ![FileManagementGIF](assets/file_management.gif)
@@ -126,15 +126,15 @@ This is an interactive terminal-based application, not a crate. To use the tool,
 1. **Start the Server**:
    - The WebSocket server is initiated from within the application by clicking the `Collaborate` button in the status bar, that triggers the collaboration modal.
    - There are two options in the collaboration modal:
-     - **Start a Session**: To start a session, the user must provide a valid **read or write password**. Both fields cannot be left empty.
-       - **File Path**: You can also specify a valid **file path** that will be loaded into the editor at the start of the session and shared with all collaborators when the session starts.
+     - **Start a Session**: To start a session, the user must provide a valid **read or write password**. Both fields cannot be left empty. Note that if the read password is supplied but the write password is not, edit access for the document will not be password restricted, and vice versa.
+       - **File Path**: You can also optionally specify a valid **file path** that will be loaded into the editor at the start of the session and shared with all collaborators when the session starts.
      - **Join a Session**: To join an existing session, the user needs to specify whether they are joining as a **read-only** or **read/write** client. The password to join the session must be provided by the session host.
        - If the server is not running or cannot be reached, an error will be displayed.
        - If the provided password is incorrect, an error message will be shown indicating the issue.
 
 2. **File Path and Permissions**:
    - For **starting a session**, the file path you provide will be loaded into the editor, and any changes will be broadcasted to all connected clients.
-   - For **read/write permissions**, ensure that at least one password (either read or write) is set. Both fields cannot be left empty.
+   - For **read/write permissions**, ensure that at least one password (either read or write) is set. Both fields cannot be left empty. Note that if the read password is supplied but the write password is not, edit access for the document will not be password restricted, and vice versa.
 
 3. **Collaborator Access**:
    - Once the server is running, share the **session URL** with your collaborators. They can use this URL to join the session as either read-only or read/write clients, depending on the permissions you set for them.
@@ -153,7 +153,7 @@ This is an interactive terminal-based application, not a crate. To use the tool,
 ---
 
 ### Shortcut Palette
-The application includes a shortcut palette to help users quickly access common features, which is togggered by pressing `Cmd + K`.
+The application includes a shortcut palette to help users quickly access common features, which is togggered by pressing `Cmd + P`.
 
 **Screenshot of the Shortcut Palette:**
 
@@ -202,7 +202,7 @@ The application includes a shortcut palette to help users quickly access common 
 
 4. **Start the Markdown Editor**
    ```bash
-   ./target/release/editor
+   ./target/release/rust-note
    ```
 ---
 
@@ -266,12 +266,32 @@ The foundational framework for real-time document state synchronization was comp
 
 ## Lessons Learned and Concluding Remarks
 
-### Lessons Learned
+### <a name="lessons-learned-and-concluding-remarks"></a>Lessons Learned
+•	Leveraging community crates (e.g., iced, serde, async-tungstenite) accelerated development significantly. However, in the case of iced, it
+also came at the cost of performance. iced provided us with a text editor widget that enabled the creation of a rich text editing interface,
+but this widget was too high-level and abstract. In other words, it did not expose enough of the underlying text editing functionality to allow
+us to manually make edits efficiently. For example, suppose we wanted to insert a single character at row r and column c, we would have to move
+the text editor cursor r rows down and c columns right—each move costing a function call—and then insert the character. Moreover, the text editor
+and its contents were not serializable, meaning we had to create our own "Document" struct alongside the iced text editor to keep track of the
+text content and had to figure out how to synchronize the two which involved translating iced actions—which could be quite unintuitive at times—
+to document insert and delete operations.
 
-	•	Rust’s strong type system and concurrency model greatly enhance code safety and performance but require thoughtful design to balance complexity.
-	•	Building real-time collaborative systems is challenging, particularly around state synchronization and conflict resolution.
-	•	Leveraging community crates (e.g., iced, serde, async-tungstenite) accelerated development significantly.
+•	Building a complex project with a lot of dependencies like a real-time collaborative systems is challenging. In our case, it was particularly
+around state synchronization and conflict resolution where we had the most challenges. Cargo made it easy to plug in dependencies and manage them,
+but nonetheless we did not foresee that certain crates might not work well with each other like iced and cola-crdt. We had initially wanted to
+use cola for conflict resolution, but as mentioned above, we had to translate iced actions to document operations. In the case of cola, that meant
+we had to translate iced actions to cola operations, which led us to weird and unresolvable bugs that forced us to abandon cola.
+
+•	Rust is a fantastic language. Despite the challenges we ran into, we don't think any of them were due to Rust nor were any of them made worse
+by its strong type system and its concurrency model. On the contrary, it greatly enhanced code safety and performance, and we only wish that the
+crates we used leveraged the compiler more to catch bugs at compile time instead of at runtime which is where we had the most headaches. For
+example, we've already mentioned our issues with iced and cola. The issues and bugs we ran into that made us go in circle for hours were almost
+always at runtime instead of compile time and its largely because cola does not return Results to handle errors and instead panics. At least,
+at compile time, we would know what the issue is and where it is, so that the time we spent debugging would not feel wasted or directionless.
+
 
 ### Concluding Remarks
 
-This project was both rewarding and educational, providing valuable insights into Rust’s capabilities and its ecosystem. By filling a gap in terminal-based collaborative tools, we hope this project serves as a foundation for others in the community to expand upon.
+This project was fun, rewarding and educational, providing valuable insights into Rust’s capabilities and its budding ecosystem.
+Its given us exposure to many of Rust's crates and has given us an idea of which one's we would like to work with in the future.
+Finally, by filling a gap in terminal-based collaborative tools, we hope this project serves as a foundation for others in the community to expand upon.
