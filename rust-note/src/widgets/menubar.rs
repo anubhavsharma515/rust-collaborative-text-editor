@@ -10,6 +10,7 @@ pub enum MenuMessage {
     OpenFile,
     FileOpened(Result<(PathBuf, Arc<String>), String>),
     SaveFile,
+    CloseFile,
     FileSaved(Result<PathBuf, String>),
 }
 
@@ -20,7 +21,12 @@ impl MenuBar {
         Self {}
     }
 
-    pub fn view(&self, theme: Theme, disable_open_file: bool) -> Element<MenuMessage> {
+    pub fn view(
+        &self,
+        theme: Theme,
+        disable_open_file: bool,
+        file_opened: bool,
+    ) -> Element<'_, MenuMessage> {
         let file_picker = if disable_open_file {
             button("Open File").padding(5)
         } else {
@@ -32,11 +38,19 @@ impl MenuBar {
             .on_press(MenuMessage::SaveFile)
             .padding(5);
 
+        let file_close = if file_opened {
+            button("Close File").padding(5)
+        } else {
+            button("Close File")
+                .on_press(MenuMessage::CloseFile)
+                .padding(5)
+        };
+
         let theme_selector = pick_list(Theme::ALL, Some(theme), MenuMessage::ThemeSelected)
             .width(Length::Shrink)
             .padding(5);
 
-        row![file_picker, file_save, theme_selector]
+        row![file_picker, file_save, file_close, theme_selector]
             .spacing(10)
             .align_y(Alignment::Center)
             .into()

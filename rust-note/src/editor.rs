@@ -555,7 +555,8 @@ impl Editor {
                             true
                         } else {
                             false
-                        }
+                        },
+                        if let None = self.file { true } else { false }
                     )
                     .map(Message::Menu),
                 toggler(self.markdown_preview_open)
@@ -800,6 +801,11 @@ impl Editor {
             Message::Menu(menu_msg) => match menu_msg {
                 MenuMessage::ThemeSelected(theme) => {
                     self.theme = theme;
+                }
+                MenuMessage::CloseFile => {
+                    self.file = None;
+                    self.content = text_editor::Content::new();
+                    self.markdown_text = markdown::parse("").collect();
                 }
                 MenuMessage::FileOpened(result) => match result {
                     Ok((path, contents)) => {
