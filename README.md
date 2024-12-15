@@ -81,7 +81,7 @@ This project lays the groundwork for future enhancements, including syntax-aware
 1. **Custom Client-Side Interface for Text Editing**
    - Implements a terminal-based text editor with basic text-editing operations such as creating, opening, editing, and saving files.
    - Provides button-based and hotkey-enabled text styling options, such as bold, italics, and underline.
-   - Includes basic text-analysis tools, such as word, and and line counts.
+   - Includes basic text-analysis tools, such as word and line counts.
    - Allows customization through different themes for an enhanced user experience.
    - Supports a markdown preview mode, similar to Obsidian, for `.md` files, enabling live preview of document edits.
 
