@@ -806,6 +806,13 @@ impl Editor {
                     self.file = None;
                     self.content = text_editor::Content::new();
                     self.markdown_text = markdown::parse("").collect();
+
+                    let document = self.document.clone();
+                    return Task::future(async move {
+                        let mut doc_lock = document.lock().await;
+                        doc_lock.buffer = "".to_string();
+                        Message::NoOp
+                    });
                 }
                 MenuMessage::FileOpened(result) => match result {
                     Ok((path, contents)) => {
