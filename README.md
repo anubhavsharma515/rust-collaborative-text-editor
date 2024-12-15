@@ -81,7 +81,7 @@ This project lays the groundwork for future enhancements, including syntax-aware
 1. **Custom Client-Side Interface for Text Editing**
    - Implements a terminal-based text editor with basic text-editing operations such as creating, opening, editing, and saving files.
    - Provides button-based and hotkey-enabled text styling options, such as bold, italics, and underline.
-   - Includes basic text-analysis tools, such as word, line, paragraph, and character counts.
+   - Includes basic text-analysis tools, such as word, and and line counts.
    - Allows customization through different themes for an enhanced user experience.
    - Supports a markdown preview mode, similar to Obsidian, for `.md` files, enabling live preview of document edits.
 
@@ -118,6 +118,8 @@ This is an interactive terminal-based application, not a crate. To build the exe
 ### File Management
 - **Open File**: Click the `Open File` button to load an existing markdown file for editing.
 - **Save File**: Save your work using the `Save File` button during the session.
+- **Close File**: Close the current file using the `Close File` button, to restore the editor to its initial state.
+  - Note that this will not save any changes made to the file, and if you want to save your changes, you will need to do so by clicking the `Save File` button.
 
 ![FileManagementGIF](assets/file_management.gif)
 
@@ -139,7 +141,7 @@ This is an interactive terminal-based application, not a crate. To build the exe
    - For **read/write permissions**, ensure that at least one password (either read or write) is set. Both fields cannot be left empty. Note that if the read password is supplied but the write password is not, edit access for the document will not be password restricted, and vice versa.
 
 3. **Collaborator Access**:
-   - Once the server is running, share the **session URL** with your collaborators. They can use this URL to join the session as either read-only or read/write clients, depending on the permissions you set for them.
+   - Once the server is running, share the **relevant access-level password(s)** with your collaborators. They can use these to join the session as either read-only or read/write clients, depending on the permissions you set for them.
    - All changes made by any user will be reflected in real time for all connected users.
 
 ![CollaborationGIF](assets/collab.gif)
@@ -171,7 +173,7 @@ The application includes a shortcut palette to help users quickly access common 
 | **Delete word**             | `Cmd + option + backspace`|
 | **Delete line**             | `Cmd + backspace`         |
 | **Toggle shortcut palette** | `Cmd + p`                 |
-| **Toggle session modal**   | `Cmd + n`                  |
+| **Toggle session modal**    | `Cmd + n`                 |
 | **Open file**               | `Cmd + o`                 |
 | **Save file**               | `Cmd + s`                 |
 
@@ -218,10 +220,10 @@ The application includes a shortcut palette to help users quickly access common 
 - **Anubhav**:
     - Implemented a **Menu Bar** with options for file picking, theme selection, file saving, and Markdown preview.
     - Developed a custom **User Cursor Position Marker** to track and display the user’s cursor location within the editor.
-    - Created a **Status Bar** that supports text-analysis features like character, word, and line count.
+    - Created a **Status Bar** that supports text-analysis features like word, and line count.
 
 - **Jesse**:
-    - Developed a **Formatting Bar** with basic stylistic controls such as **bold, italic, underline**, **color customization** for text, along with **font size adjustments**.
+    - Developed a **Formatting Bar** with basic stylistic controls such as **bold, italic, underline** for text, along with **font size adjustments**.
     - Set up key-binding shortcuts for common text editing (e.g., **cut, copy, paste, select, delete, and save**) as well as the text-formatting actions (mentioned above).
     - Implemented a custom **Shortcut Palette** widget for displaying supported key-bindings.
 
@@ -269,7 +271,7 @@ The foundational framework for real-time document state synchronization was comp
 ## Lessons Learned and Concluding Remarks
 
 ### <a name="lessons-learned-and-concluding-remarks"></a>Lessons Learned
-•	Leveraging community crates (e.g., iced, serde, async-tungstenite) accelerated development significantly. However, in the case of iced, it
+-	Leveraging community crates (e.g., iced, serde, async-tungstenite) accelerated development significantly. However, in the case of iced, it
 also came at the cost of performance. iced provided us with a text editor widget that enabled the creation of a rich text editing interface,
 but this widget was too high-level and abstract. In other words, it did not expose enough of the underlying text editing functionality to allow
 us to manually make edits efficiently. For example, suppose we wanted to insert a single character at row r and column c, we would have to move
@@ -278,13 +280,13 @@ and its contents were not serializable, meaning we had to create our own "Docume
 text content and had to figure out how to synchronize the two which involved translating iced actions—which could be quite unintuitive at times—
 to document insert and delete operations.
 
-•	Building a complex project with a lot of dependencies like a real-time collaborative systems is challenging. In our case, it was particularly
+-	Building a complex project with a lot of dependencies like a real-time collaborative systems is challenging. In our case, it was particularly
 around state synchronization and conflict resolution where we had the most challenges. Cargo made it easy to plug in dependencies and manage them,
 but nonetheless we did not foresee that certain crates might not work well with each other like iced and cola-crdt. We had initially wanted to
 use cola for conflict resolution, but as mentioned above, we had to translate iced actions to document operations. In the case of cola, that meant
 we had to translate iced actions to cola operations, which led us to weird and unresolvable bugs that forced us to abandon cola.
 
-•	Rust is a fantastic language. Despite the challenges we ran into, we don't think any of them were due to Rust nor were any of them made worse
+-	Rust is a fantastic language. Despite the challenges we ran into, we don't think any of them were due to Rust nor were any of them made worse
 by its strong type system and its concurrency model. On the contrary, it greatly enhanced code safety and performance, and we only wish that the
 crates we used leveraged the compiler more to catch bugs at compile time instead of at runtime which is where we had the most headaches. For
 example, we've already mentioned our issues with iced and cola. The issues and bugs we ran into that made us go in circle for hours were almost
