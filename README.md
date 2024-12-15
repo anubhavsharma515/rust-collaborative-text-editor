@@ -16,6 +16,8 @@
 
 ## Video Demo
 
+A brief walkthrough of our project can be found [here](https://www.veed.io/view/0d28ec2d-a3ad-4e02-a7c0-9556597ed083?panel=share).
+
 ---
 
 ## Motivation
